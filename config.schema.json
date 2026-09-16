@@ -71,18 +71,18 @@
         "description": "En dessous de ce pourcentage, HomeKit signale un niveau bas — exploitable dans une automatisation."
       },
       "autoDetectRefill": {
-        "title": "Détecter les pleins automatiquement",
+        "title": "Détecter les pleins automatiquement (expérimental)",
         "type": "boolean",
-        "default": true,
+        "default": false,
         "required": false,
-        "description": "Enregistre un plein quand le couvercle du réservoir est refermé après avoir été ouvert. Décochez si un simple coup d'œil dans le réservoir est compté à tort comme un plein."
+        "description": "Enregistre un plein quand le contact inputCover repasse de false à true. Vérifié sans succès sur un RIKA Sumo : le contact reste à true couvercle ouvert. N'activez cette option que si vous avez constaté que votre modèle remonte bien ce contact."
       },
       "refillSwitch": {
         "title": "Exposer l'interrupteur « plein effectué »",
         "type": "boolean",
         "default": true,
         "required": false,
-        "description": "Ajoute un interrupteur dans l'app Maison pour enregistrer un plein à la main. Il retombe de lui-même après activation."
+        "description": "Ajoute un interrupteur dans l'app Maison pour enregistrer un plein. C'est le mécanisme fiable : laissez-le actif."
       }
     }
   }

@@ -100,13 +100,26 @@ une automatisation pour être prévenu avant la panne sèche.
 
 ### Enregistrer un plein
 
-Deux mécanismes, actifs ensemble par défaut :
+**Le mécanisme fiable est l'interrupteur « plein »** exposé dans l'app Maison.
+Il retombe de lui-même après activation. Désactivable via `refillSwitch`.
 
-- **Automatique** — un plein est enregistré quand le couvercle du réservoir
-  (`inputCover`) est refermé après avoir été ouvert. Désactivable via
-  `autoDetectRefill` si un simple coup d'œil est compté à tort.
-- **Manuel** — un interrupteur « plein » dans l'app Maison, qui retombe de
-  lui-même. Désactivable via `refillSwitch`.
+### Détection automatique (expérimental, désactivé par défaut)
+
+Le plugin sait aussi enregistrer un plein quand le contact `inputCover`
+repasse de `false` à `true`. **Cette détection a été testée sans succès sur un
+RIKA Sumo** : couvercle physiquement ouvert, `inputCover` reste à `true`, sur
+six relevés en trente secondes avec `lastSeenMinutes: 0`. Les contacts
+`inputDoor`, `inputGridContact`, `inputBurnBackFlapSwitch`,
+`inputFlueGasFlapSwitch` et `inputPressureSwitch` ne bougent pas davantage.
+
+Ces contacts ne semblent donc pas refléter l'état physique dans la charge utile
+du cloud, au moins poêle à l'arrêt. L'option `autoDetectRefill` est laissée
+en place, à `false` par défaut : ne l'activez que si vous avez vérifié que votre
+modèle remonte bien ce contact. Pour le vérifier, ouvrez le couvercle et
+laissez-le ouvert, puis comparez deux relevés de `/api/client/<stoveID>/status`.
+
+Une piste non explorée : ces contacts sont peut-être rafraîchis uniquement
+lorsque le poêle fonctionne.
 
 ### Options
 
@@ -114,7 +127,7 @@ Deux mécanismes, actifs ensemble par défaut :
 |---|---|---|
 | `hopperCapacityKg` | `40` | Capacité du réservoir plein, en kg |
 | `lowPelletThresholdPercent` | `20` | Seuil de l'alerte de niveau bas |
-| `autoDetectRefill` | `true` | Détection des pleins via le couvercle |
+| `autoDetectRefill` | `false` | Détection via le couvercle — expérimental, voir ci-dessus |
 | `refillSwitch` | `true` | Interrupteur manuel dans HomeKit |
 
 ### Limites à connaître

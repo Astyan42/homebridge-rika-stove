@@ -60,7 +60,9 @@ class RIKAFirenetAccessory {
     // quantité relevée lors du dernier plein.
     this.hopperCapacityKg = Number(this.config.hopperCapacityKg) || DEFAULT_HOPPER_CAPACITY_KG
     this.lowPelletPercent = Number(this.config.lowPelletThresholdPercent) || DEFAULT_LOW_PELLET_PERCENT
-    this.autoDetectRefill = this.config.autoDetectRefill !== false
+    // Opt-in : sur un RIKA Sumo, inputCover reste à true couvercle ouvert.
+    // Voir README, section « Détection automatique ». Désactivé par défaut.
+    this.autoDetectRefill = this.config.autoDetectRefill === true
     this.pelletState = { feedRateTotalAtRefill: null, lastRefillAt: null }
     this.lastFeedRateTotal = null
     this.previousCoverClosed = null

@@ -101,8 +101,8 @@ check('alerte au franchissement du seuil, une seule fois', () => {
 })
 
 console.log('\n=== DETECTION DU PLEIN PAR LE COUVERCLE ===')
-check('couvercle ouvert puis refermé -> plein', () => {
-  const a = make({ hopperCapacityKg: 40 })
+check('couvercle ouvert puis refermé -> plein (si autoDetectRefill activé)', () => {
+  const a = make({ hopperCapacityKg: 40, autoDetectRefill: true })
   a.updatePelletLevel(sensors(2072))
   a.updatePelletLevel(sensors(2100))
   assert.equal(a.pelletLevelPercent, 30)
@@ -112,14 +112,14 @@ check('couvercle ouvert puis refermé -> plein', () => {
   assert.equal(a.pelletState.feedRateTotalAtRefill, 2100)
 })
 check('couvercle resté fermé -> aucun plein', () => {
-  const a = make({ hopperCapacityKg: 40 })
+  const a = make({ hopperCapacityKg: 40, autoDetectRefill: true })
   a.updatePelletLevel(sensors(2072))
   a.updatePelletLevel(sensors(2092))
   assert.equal(a.pelletLevelPercent, 50)
 })
-check('autoDetectRefill: false -> couvercle ignoré', () => {
+check('par défaut (opt-in) -> couvercle ignoré', () => {
   reset()
-  const a = make({ hopperCapacityKg: 40, autoDetectRefill: false })
+  const a = make({ hopperCapacityKg: 40 })
   a.updatePelletLevel(sensors(2072))
   a.updatePelletLevel(sensors(2092))
   a.updatePelletLevel(sensors(2092, false))
