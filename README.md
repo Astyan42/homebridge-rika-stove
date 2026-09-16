@@ -182,6 +182,8 @@ affiche la valeur brute à chaque apparition, à rapprocher de la notice.
 | `pelletSensorAccessory` | `false` | Tuile autonome pour le niveau de pellets |
 | `flameSensor` | `true` | Accessoire capteur de température de flamme |
 | `serviceGauge` | `true` | Second bloc : durée avant entretien |
+| `pelletGaugeName` | `Pellets` | Étiquette du bloc niveau de pellets |
+| `serviceGaugeName` | `Entretien` | Étiquette du bloc durée avant entretien |
 | `refillWarningCode` | `2` | Code `statusWarning` du couvercle ouvert |
 | `refillSwitch` | `true` | Interrupteur manuel dans HomeKit |
 
@@ -294,6 +296,18 @@ Deux permissions sont conservées volontairement, contre l'intuition :
   même façon : un bloc inactif n'affiche pas sa valeur. Le niveau reste ainsi
   lisible poêle éteint, ce qui est justement le moment où on veut le
   connaître.
+
+### Nommer les blocs
+
+L'app Maison **ignore la caractéristique `Name`** et s'appuie sur
+`ConfiguredName` pour étiqueter les blocs d'un accessoire. Sans elle, tous les
+blocs reprennent le nom de l'accessoire — deux ventilateurs nommés « Poele »
+et indiscernables. Les deux jauges portent donc une `ConfiguredName`,
+personnalisable via `pelletGaugeName` et `serviceGaugeName`.
+
+Cette caractéristique n'étant pas déclarée optionnelle sur `Fanv2`, elle est
+enregistrée explicitement avec `addOptionalCharacteristic` — sans quoi HAP
+émet un avertissement à chaque démarrage.
 
 ### Ce qu'Apple Home affiche, et où
 

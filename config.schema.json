@@ -129,6 +129,20 @@
         "default": true,
         "required": false,
         "description": "Ajoute dans la fiche du poêle un second bloc, à côté du niveau de pellets, indiquant en pourcentage ce qu'il reste avant le grand nettoyage."
+      },
+      "pelletGaugeName": {
+        "title": "Nom du bloc « niveau de pellets »",
+        "type": "string",
+        "default": "Pellets",
+        "required": false,
+        "description": "Étiquette du bloc dans la fiche du poêle."
+      },
+      "serviceGaugeName": {
+        "title": "Nom du bloc « durée avant entretien »",
+        "type": "string",
+        "default": "Entretien",
+        "required": false,
+        "description": "Étiquette du second bloc dans la fiche du poêle."
       }
     }
   }

@@ -32,7 +32,7 @@ const DEFAULT_REFILL_WARNING_CODE = 2
 // caractéristiques, de bornes ou de permissions : Homebridge restaure les
 // accessoires depuis son cache, et un setProps sur un service restauré n'est
 // pas repris. Le service est alors reconstruit une fois, proprement.
-const SERVICE_SHAPE = 6
+const SERVICE_SHAPE = 7
 
 module.exports = (api) => {
   api.registerPlatform(PLATFORM_NAME, RIKAFirenetPlatform)
@@ -270,6 +270,21 @@ class RIKAFirenetPlatform {
     }
   }
 
+  // L'app Maison ignore la caractéristique Name et s'appuie sur ConfiguredName
+  // pour étiqueter les blocs d'un accessoire. Sans elle, tous les blocs
+  // portent le nom de l'accessoire. Elle n'est pas déclarée optionnelle sur
+  // tous les services, d'où l'enregistrement explicite qui évite un
+  // avertissement HAP.
+  nameService (service, label) {
+    const C = this.Characteristic
+    if (typeof service.addOptionalCharacteristic === 'function') {
+      service.addOptionalCharacteristic(C.ConfiguredName)
+    }
+    service.setCharacteristic(C.ConfiguredName, label)
+    service.setCharacteristic(C.Name, label)
+    return service
+  }
+
   // Récupère un service existant ou le crée, sans dupliquer au redémarrage.
   serviceOn (accessory, type, displayName, subtype) {
     if (subtype) {
@@ -337,6 +352,7 @@ class RIKAFirenetPlatform {
     // au HeaterCooler, la même caractéristique était reléguée dans la
     // sous-page des réglages.
     const gauge = this.serviceOn(heater.accessory, this.Service.Fanv2, `${this.name} pellets`, 'pellets')
+    this.nameService(gauge, this.config.pelletGaugeName || 'Pellets')
 
     // Le bloc doit être actif pour que sa valeur s'affiche ; une extinction
     // est annulée. Le niveau reste lisible poêle éteint, ce qui est justement
@@ -365,6 +381,7 @@ class RIKAFirenetPlatform {
     if (this.serviceGauge) {
       const svcGauge = this.serviceOn(heater.accessory, this.Service.Fanv2,
         `${this.name} entretien`, 'servicegauge')
+      this.nameService(svcGauge, this.config.serviceGaugeName || 'Entretien')
       svcGauge.getCharacteristic(C.Active)
           .onGet(() => C.Active.ACTIVE)
           .onSet(() => {
