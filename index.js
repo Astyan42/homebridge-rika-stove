@@ -163,11 +163,12 @@ class RIKAFirenetPlatform {
     this.updateInterval = Number(this.config.updateInterval) || DEFAULT_UPDATE_INTERVAL
     this.name = this.config.name || 'Poele'
 
-    // --- Thermostat ---
-    this.CurrentHeatingCoolingState = 0
-    this.TargetHeatingCoolingState = 0
+    // --- Poêle (HeaterCooler) ---
+    this.Active = 0
+    this.CurrentHeaterCoolerState = 0 // INACTIVE / IDLE / HEATING
     this.CurrentTemperature = 20
     this.TargetTemperature = 20
+    this.HeatingPower = 70 // puissance de chauffe du poêle, en %
     this.currentControls = null
     this.latestUpdateTimestamp = 0
     this.updateInFlight = null
@@ -271,61 +272,93 @@ class RIKAFirenetPlatform {
     const created = []
     const removed = []
 
-    // --- 1. Thermostat -----------------------------------------------------
-    const thermostat = this.buildAccessory('thermostat', this.name, Cat.THERMOSTAT, true)
-    this.describe(thermostat.accessory, 'Firenet', 'thermostat')
-    const t = this.serviceOn(thermostat.accessory, this.Service.Thermostat, this.name)
+    // --- 1. Le poêle : HeaterCooler ------------------------------------
+    // Apple Home donne à ce service une tuile riche — mode, température et
+    // curseur de puissance dans la même vue — là où Thermostat n'offre que
+    // la température. Le service Battery y ajoute le niveau de pellets.
+    const heater = this.buildAccessory('thermostat', this.name, Cat.AIR_HEATER, true)
+    heater.accessory.category = Cat.AIR_HEATER
+    this.describe(heater.accessory, 'Firenet', 'thermostat')
 
-    t.getCharacteristic(C.CurrentHeatingCoolingState)
-        .onGet(() => this.readCharacteristic('CurrentHeatingCoolingState'))
-        .setProps({ maxValue: 2, minValue: 0, validValues: [0, 1, 2] })
-    t.getCharacteristic(C.TargetHeatingCoolingState)
-        .onGet(() => this.readCharacteristic('TargetHeatingCoolingState'))
-        .onSet((value) => this.setTargetHeatingCoolingState(value))
-        .setProps({ maxValue: 1, minValue: 0, validValues: [0, 1] })
-    t.getCharacteristic(C.CurrentTemperature)
-        .onGet(() => this.readCharacteristic('CurrentTemperature'))
-        .setProps({ minValue: -50, maxValue: 100, minStep: 0.1 })
-    const target = t.getCharacteristic(C.TargetTemperature)
-    target.setProps({ minValue: 14, maxValue: 28, minStep: 1 })
-    target.updateValue(this.TargetTemperature)
-    target.onGet(() => this.readCharacteristic('TargetTemperature'))
-          .onSet((value) => this.setTargetTemperature(value))
-    t.getCharacteristic(C.TemperatureDisplayUnits)
-        .onGet(() => C.TemperatureDisplayUnits.CELSIUS)
-    // StatusFault a été porté par ce service jusqu'en 2.0.0. Homebridge le
-    // restaure depuis son cache : il resterait exposé avec une valeur figée.
-    const staleFault = t.testCharacteristic && t.testCharacteristic(C.StatusFault)
-      ? t.getCharacteristic(C.StatusFault)
-      : null
-    if (staleFault && typeof t.removeCharacteristic === 'function') {
-      t.removeCharacteristic(staleFault)
-      this.log.debug('StatusFault retiré du thermostat (hérité du cache 2.0.0)')
+    // Migration depuis les versions < 2.1 qui exposaient un Thermostat.
+    const legacy = heater.accessory.getService(this.Service.Thermostat)
+    if (legacy) {
+      heater.accessory.removeService(legacy)
+      this.log('Service Thermostat remplacé par HeaterCooler')
     }
 
-    this.services.thermostat = t
-    ;(thermostat.isNew ? created : []).push(thermostat.accessory)
+    const h = this.serviceOn(heater.accessory, this.Service.HeaterCooler, this.name)
+
+    h.getCharacteristic(C.Active)
+        .onGet(() => this.readCharacteristic('Active'))
+        .onSet((value) => this.setActive(value))
+    h.getCharacteristic(C.CurrentHeaterCoolerState)
+        .onGet(() => this.readCharacteristic('CurrentHeaterCoolerState'))
+    // Le poêle ne sait que chauffer : un seul mode proposé.
+    h.getCharacteristic(C.TargetHeaterCoolerState)
+        .setProps({ validValues: [C.TargetHeaterCoolerState.HEAT] })
+        .onGet(() => C.TargetHeaterCoolerState.HEAT)
+        .onSet(() => {})
+    h.getCharacteristic(C.CurrentTemperature)
+        .setProps({ minValue: -50, maxValue: 100, minStep: 0.1 })
+        .onGet(() => this.readCharacteristic('CurrentTemperature'))
+
+    const threshold = h.getCharacteristic(C.HeatingThresholdTemperature)
+    threshold.setProps({ minValue: 14, maxValue: 28, minStep: 1 })
+    threshold.updateValue(this.TargetTemperature)
+    threshold.onGet(() => this.readCharacteristic('TargetTemperature'))
+             .onSet((value) => this.setTargetTemperature(value))
+
+    // La puissance de chauffe du poêle, exposée comme une vitesse : c'est le
+    // curseur que HomeKit affiche à côté de la température.
+    const power = h.getCharacteristic(C.RotationSpeed)
+    power.setProps({ minValue: 0, maxValue: 100, minStep: 10 })
+    power.updateValue(this.HeatingPower)
+    power.onGet(() => this.readCharacteristic('HeatingPower'))
+         .onSet((value) => this.setHeatingPower(value))
+
+    // Niveau de pellets sur le même accessoire : Apple Home affiche le
+    // pourcentage dans la fiche du poêle et signale le niveau bas.
+    const heaterBattery = this.serviceOn(heater.accessory, this.Service.Battery, `${this.name} pellets`)
+    heaterBattery.getCharacteristic(C.BatteryLevel).onGet(() => this.pelletLevelPercent)
+    heaterBattery.getCharacteristic(C.StatusLowBattery)
+        .onGet(() => this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0)
+    heaterBattery.setCharacteristic(C.ChargingState, C.ChargingState.NOT_CHARGEABLE)
+
+    this.services.heater = h
+    this.services.heaterBattery = heaterBattery
+    ;(heater.isNew ? created : []).push(heater.accessory)
 
     // --- 2. Niveau de pellets ---------------------------------------------
     // Apple Home n'affiche aucune tuile pour un service Battery seul. Un
     // capteur d'humidité est le seul type qui présente un pourcentage dans
     // une tuile : le libellé est trompeur, la lisibilité y gagne. Le service
     // Battery est conservé à côté pour l'alerte de niveau bas.
-    const pellets = this.buildAccessory('pellets', `${this.name} pellets`, Cat.SENSOR, true)
-    this.describe(pellets.accessory, 'Niveau de pellets', 'pellets')
-    const level = this.serviceOn(pellets.accessory, this.Service.HumiditySensor, `${this.name} pellets`)
-    level.getCharacteristic(C.CurrentRelativeHumidity)
-        .onGet(() => this.pelletLevelPercent)
-    level.getCharacteristic(C.StatusLowBattery)
-        .onGet(() => this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0)
-    const battery = this.serviceOn(pellets.accessory, this.Service.Battery, `${this.name} pellets`)
-    battery.getCharacteristic(C.BatteryLevel).onGet(() => this.pelletLevelPercent)
-    battery.getCharacteristic(C.StatusLowBattery)
-        .onGet(() => this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0)
-    battery.setCharacteristic(C.ChargingState, C.ChargingState.NOT_CHARGEABLE)
-    this.services.pelletLevel = level
-    this.services.pelletBattery = battery
-    ;(pellets.isNew ? created : []).push(pellets.accessory)
+    // Tuile autonome facultative. Le niveau y passe par un capteur
+    // d'humidité, seul type qu'Apple Home affiche en pourcentage : le libellé
+    // est trompeur, d'où le choix de ne pas l'activer par défaut.
+    const pellets = this.buildAccessory('pellets', `${this.name} pellets`, Cat.SENSOR,
+      this.config.pelletSensorAccessory === true)
+    if (pellets.unwanted) {
+      if (pellets.accessory) removed.push(pellets.accessory)
+      this.services.pelletLevel = null
+      this.services.pelletBattery = null
+    } else {
+      this.describe(pellets.accessory, 'Niveau de pellets', 'pellets')
+      const level = this.serviceOn(pellets.accessory, this.Service.HumiditySensor, `${this.name} pellets`)
+      level.getCharacteristic(C.CurrentRelativeHumidity)
+          .onGet(() => this.pelletLevelPercent)
+      level.getCharacteristic(C.StatusLowBattery)
+          .onGet(() => this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0)
+      const battery = this.serviceOn(pellets.accessory, this.Service.Battery, `${this.name} pellets`)
+      battery.getCharacteristic(C.BatteryLevel).onGet(() => this.pelletLevelPercent)
+      battery.getCharacteristic(C.StatusLowBattery)
+          .onGet(() => this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0)
+      battery.setCharacteristic(C.ChargingState, C.ChargingState.NOT_CHARGEABLE)
+      this.services.pelletLevel = level
+      this.services.pelletBattery = battery
+      ;(pellets.isNew ? created : []).push(pellets.accessory)
+    }
 
     // --- 3. Interrupteur de plein ------------------------------------------
     const refill = this.buildAccessory('refill', `${this.name} plein`, Cat.SWITCH,
@@ -425,10 +458,18 @@ class RIKAFirenetPlatform {
     }, this.updateInterval)
   }
 
-  async setTargetHeatingCoolingState (value) {
-    this.log(`Changement de mode: ${value === 0 ? 'OFF' : 'HEAT'}`)
-    this.TargetHeatingCoolingState = value
-    await this.updateCharacteristic('onOff', value !== 0)
+  async setActive (value) {
+    this.log(`Changement de mode: ${value ? 'ON' : 'OFF'}`)
+    this.Active = value ? 1 : 0
+    await this.updateCharacteristic('onOff', value === 1 || value === true)
+  }
+
+  async setHeatingPower (value) {
+    // Le poêle refuse les valeurs hors de sa plage ; on relit son état juste
+    // après l'envoi, ce qui remet le curseur sur la valeur réellement retenue.
+    this.log(`Puissance de chauffe: ${value} %`)
+    this.HeatingPower = value
+    await this.updateCharacteristic('heatingPower', value)
   }
 
   async setTargetTemperature (value) {
@@ -486,32 +527,39 @@ class RIKAFirenetPlatform {
 
       this.log.debug(`États: mainState=${mainState}, subState=${subState}, onOff=${isOn}`)
 
-      if (!isOn || (mainState === 0 && subState === 1)) {
-        this.CurrentHeatingCoolingState = 0 // OFF
+      this.Active = isOn ? 1 : 0
+      if (!isOn) {
+        this.CurrentHeaterCoolerState = 0 // INACTIVE
+      } else if (mainState >= 2 && mainState <= 5) {
+        this.CurrentHeaterCoolerState = 2 // HEATING, combustion en cours
       } else {
-        this.CurrentHeatingCoolingState = 1 // HEATING
+        this.CurrentHeaterCoolerState = 1 // IDLE, sous tension sans flamme
       }
-      this.TargetHeatingCoolingState = isOn ? 1 : 0
+      const power = Number(body.controls.heatingPower)
+      if (Number.isFinite(power)) {
+        this.HeatingPower = power
+      }
 
       this.latestUpdateTimestamp = Date.now()
       this.log.debug(`✓ Statut mis à jour - Temp: ${this.CurrentTemperature}°C / Cible: ${this.TargetTemperature}°C / État: ${isOn ? 'ON' : 'OFF'}`)
 
       this.updatePelletLevel(body.sensors)
       this.updateHealth(body.sensors)
-      this.publishThermostat()
+      this.publishHeater()
     } catch (parseError) {
       this.log('Erreur lors du traitement des données:', parseError.message)
     }
   }
 
-  publishThermostat () {
+  publishHeater () {
     const C = this.Characteristic
-    const t = this.services.thermostat
-    if (!t) return
-    t.getCharacteristic(C.CurrentHeatingCoolingState).updateValue(this.CurrentHeatingCoolingState)
-    t.getCharacteristic(C.TargetHeatingCoolingState).updateValue(this.TargetHeatingCoolingState)
-    t.getCharacteristic(C.CurrentTemperature).updateValue(this.CurrentTemperature)
-    t.getCharacteristic(C.TargetTemperature).updateValue(this.TargetTemperature)
+    const h = this.services.heater
+    if (!h) return
+    h.getCharacteristic(C.Active).updateValue(this.Active)
+    h.getCharacteristic(C.CurrentHeaterCoolerState).updateValue(this.CurrentHeaterCoolerState)
+    h.getCharacteristic(C.CurrentTemperature).updateValue(this.CurrentTemperature)
+    h.getCharacteristic(C.HeatingThresholdTemperature).updateValue(this.TargetTemperature)
+    h.getCharacteristic(C.RotationSpeed).updateValue(this.HeatingPower)
   }
 
   async updateCharacteristic (controlItem, value) {
@@ -740,6 +788,11 @@ class RIKAFirenetPlatform {
       this.services.pelletLevel.getCharacteristic(C.CurrentRelativeHumidity)
           .updateValue(this.pelletLevelPercent)
       this.services.pelletLevel.getCharacteristic(C.StatusLowBattery).updateValue(low)
+    }
+    if (this.services.heaterBattery) {
+      this.services.heaterBattery.getCharacteristic(C.BatteryLevel)
+          .updateValue(this.pelletLevelPercent)
+      this.services.heaterBattery.getCharacteristic(C.StatusLowBattery).updateValue(low)
     }
     if (this.services.pelletBattery) {
       this.services.pelletBattery.getCharacteristic(C.BatteryLevel)

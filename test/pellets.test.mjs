@@ -241,6 +241,49 @@ check('config incomplète -> refus explicite, pas de crash', () => {
   assert.ok(messages.some(m => m.includes('Configuration incomplète')))
 })
 
+console.log('\n=== POELE : MAPPING D\'ETAT HeaterCooler ===')
+// Stub du client : on teste le mapping réel de fetchStatus, sans réseau.
+function withStatus (platform, { onOff, mainState, subState = 0, power = 70, temp = '21.5', target = '20' }) {
+  platform.client.getStatus = async () => ({
+    status: 200,
+    body: {
+      stoveID: 'TEST',
+      controls: { onOff, heatingPower: power, targetTemperature: target, revision: 1 },
+      sensors: {
+        inputRoomTemperature: temp, statusMainState: mainState, statusSubState: subState,
+        parameterFeedRateTotal: 2072, statusWarning: 0,
+        parameterServiceCountdownKg: 350, parameterKgTillCleaning: 700,
+        statusError: 0, statusSubError: 0
+      }
+    }
+  })
+  return platform.fetchStatus()
+}
+await (async () => {
+  reset()
+  const a = make({})
+  await withStatus(a, { onOff: false, mainState: 1 })
+  check('éteint -> Active=0, INACTIVE', () => {
+    assert.equal(a.Active, 0); assert.equal(a.CurrentHeaterCoolerState, 0)
+  })
+  await withStatus(a, { onOff: true, mainState: 1, subState: 3 })
+  check('sous tension sans flamme -> Active=1, IDLE', () => {
+    assert.equal(a.Active, 1); assert.equal(a.CurrentHeaterCoolerState, 1)
+  })
+  await withStatus(a, { onOff: true, mainState: 4 })
+  check('combustion en cours -> Active=1, HEATING', () => {
+    assert.equal(a.Active, 1); assert.equal(a.CurrentHeaterCoolerState, 2)
+  })
+  await withStatus(a, { onOff: true, mainState: 4, power: 50 })
+  check('puissance de chauffe relue du poêle', () => {
+    assert.equal(a.HeatingPower, 50)
+  })
+  await withStatus(a, { onOff: true, mainState: 4, temp: '23.8', target: '22' })
+  check('températures relues, y compris en chaîne de caractères', () => {
+    assert.equal(a.CurrentTemperature, '23.8'); assert.equal(a.TargetTemperature, '22')
+  })
+})()
+
 console.log(`\n${passed} test(s) réussi(s)`)
 fs.rmSync(tmp, { recursive: true, force: true })
 process.exit(process.exitCode || 0)

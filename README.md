@@ -179,6 +179,7 @@ affiche la valeur brute à chaque apparition, à rapprocher de la notice.
 | `hopperCapacityKg` | `40` | Capacité du réservoir plein, en kg |
 | `lowPelletThresholdPercent` | `20` | Seuil de l'alerte de niveau bas |
 | `autoDetectRefill` | `true` | Détection des pleins via l'avertissement du poêle |
+| `pelletSensorAccessory` | `false` | Tuile autonome pour le niveau de pellets |
 | `refillWarningCode` | `2` | Code `statusWarning` du couvercle ouvert |
 | `refillSwitch` | `true` | Interrupteur manuel dans HomeKit |
 
@@ -244,30 +245,42 @@ s'appuyer sur ce champ — c'est `statusWarning` qui porte l'information.
 
 ## Accessoires publiés
 
-Le plugin publie **cinq accessoires distincts**, et non un seul portant
-plusieurs services. C'est indispensable : Apple Home réduit un accessoire
-ponté à une tuile unique, celle de son service principal, et **n'affiche pas**
-les services secondaires (`Battery`, `FilterMaintenance`, `ContactSensor`,
-`Switch`). Regroupés, tous les indicateurs sauf le thermostat étaient
-invisibles.
-
 | Accessoire | Service | Ce qu'Apple Home montre |
 |---|---|---|
-| `Poele` | `Thermostat` | température, consigne, marche/arrêt |
-| `Poele pellets` | `HumiditySensor` + `Battery` | pourcentage de pellets restants |
+| `Poele` | `HeaterCooler` + `Battery` | marche/arrêt, température, consigne, **curseur de puissance**, et le niveau de pellets en charge |
 | `Poele plein` | `Switch` | interrupteur d'enregistrement du plein |
 | `Poele entretien` | `ContactSensor` + `FilterMaintenance` | ouvert = entretien à faire |
 | `Poele défaut` | `ContactSensor` | ouvert = le poêle signale un défaut |
 
-### Pourquoi un capteur d'humidité pour les pellets
+Plusieurs accessoires distincts, et non un seul portant plusieurs services :
+Apple Home réduit un accessoire ponté à une tuile unique, celle de son service
+principal, et n'affiche pas les services secondaires de type capteur ou
+interrupteur. Le service `Battery` fait exception — il est rendu dans la fiche
+de l'accessoire qui le porte, ce qui permet de garder le niveau de pellets
+avec le poêle.
 
-Apple Home ne crée aucune tuile pour un service `Battery` seul, et n'affiche
-un pourcentage que pour quelques types de capteurs. Le capteur d'humidité est
-le seul qui présente une valeur en pourcentage dans une tuile lisible. Le
-libellé est donc trompeur — la tuile parlera d'humidité — mais la valeur
-affichée est bien le niveau de pellets. Le service `Battery` est conservé sur
-le même accessoire pour l'alerte de niveau bas et pour les applications qui
-l'affichent correctement, comme Eve.
+### Pourquoi HeaterCooler et pas Thermostat
+
+`Thermostat` n'offre qu'une consigne de température. `HeaterCooler` donne la
+tuile riche des climatiseurs : marche/arrêt, température courante, consigne et
+un curseur supplémentaire. Ce curseur porte la **puissance de chauffe réelle**
+du poêle (`controls.heatingPower`, en pourcentage) — c'est un vrai réglage,
+pas un affichage détourné. Le poêle ne sachant que chauffer, un seul mode est
+proposé.
+
+Le poêle est déclaré en catégorie `AIR_HEATER`.
+
+### Niveau de pellets
+
+Il est exposé par un service `Battery` porté par le poêle lui-même :
+pourcentage dans la fiche de l'accessoire, et signalement de niveau bas sous
+le seuil configuré. C'est l'unique représentation d'un pourcentage qu'Apple
+Home rende sans détourner un type d'accessoire.
+
+L'option `pelletSensorAccessory` publie en plus une tuile autonome, via un
+capteur d'humidité — seul type qu'Apple Home affiche en pourcentage sur une
+tuile. Le libellé parle alors d'humidité alors que la valeur est le niveau de
+pellets : c'est pourquoi cette option est désactivée par défaut.
 
 ### Identifiants stables
 
