@@ -133,8 +133,27 @@ d'avertissement l'est.
   Un remplissage réel prend plus longtemps, mais un simple coup d'œil rapide
   peut échapper à la détection — ce qui est plutôt souhaitable ici.
 
-Seul le code configuré dans `refillWarningCode` déclenche la détection : un
-autre avertissement, ou une erreur, est ignoré.
+**Le code 2 est spécifique au couvercle du réservoir.** Vérifié en ouvrant la
+porte du foyer, poêle sous tension, sur quatre relevés en 24 secondes :
+
+```
+Warning=0  Error=0  SubError=0  Service=0
+```
+
+La porte du foyer ne lève aucun avertissement : nettoyer le foyer ne peut donc
+pas être pris pour un plein. Et seul le code configuré dans
+`refillWarningCode` déclenche la détection — tout autre avertissement, ou
+toute erreur, est ignoré.
+
+### Codes `statusWarning` identifiés sur un RIKA Sumo
+
+| Code | Signification | Comment il a été établi |
+|---|---|---|
+| `0` | rien à signaler | état de repos, y compris porte du foyer ouverte |
+| `2` | couvercle du réservoir ouvert | surveillance continue pendant une ouverture |
+
+Les autres codes ne sont pas documentés par RIKA. Le journal Homebridge
+affiche la valeur brute à chaque apparition, à rapprocher de la notice.
 
 ### Options
 
