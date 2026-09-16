@@ -1,0 +1,57 @@
+{
+  "pluginAlias": "RIKAFirenet",
+  "pluginType": "accessory",
+  "singular": false,
+  "headerDisplay": "Pilotage d'un poêle RIKA Corso via le service cloud FireNet.",
+  "footerDisplay": "Le `stoveID` est visible dans l'URL de rika-firenet.com une fois connecté : `/web/summary/<stoveID>`.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Nom de l'accessoire",
+        "type": "string",
+        "default": "Poele",
+        "required": true,
+        "description": "Nom affiché dans l'application Maison."
+      },
+      "FirenetEmail": {
+        "title": "Adresse e-mail FireNet",
+        "type": "string",
+        "format": "email",
+        "required": true,
+        "description": "Identifiant de votre compte rika-firenet.com."
+      },
+      "FirenetPassword": {
+        "title": "Mot de passe FireNet",
+        "type": "string",
+        "required": true,
+        "x-schema-form": {
+          "type": "password"
+        },
+        "description": "Stocké en clair dans config.json : veillez à ce que le fichier reste en permissions 600."
+      },
+      "stoveID": {
+        "title": "Identifiant du poêle",
+        "type": "string",
+        "required": true,
+        "description": "Numéro de série FireNet, par exemple 12345678."
+      },
+      "updateInterval": {
+        "title": "Intervalle de rafraîchissement (ms)",
+        "type": "integer",
+        "default": 60000,
+        "minimum": 15000,
+        "required": false,
+        "description": "Fréquence d'interrogation du cloud FireNet. 60000 ms par défaut ; ne pas descendre trop bas pour éviter d'être limité par le service."
+      },
+      "timeout": {
+        "title": "Délai d'expiration des requêtes (ms)",
+        "type": "integer",
+        "default": 10000,
+        "minimum": 2000,
+        "required": false,
+        "description": "Temps maximum d'attente d'une réponse du cloud FireNet."
+      }
+    }
+  }
+}
