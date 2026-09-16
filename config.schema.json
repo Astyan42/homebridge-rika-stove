@@ -115,6 +115,20 @@
         "default": false,
         "required": false,
         "description": "Publie en plus un accessoire capteur dédié au niveau de pellets. Il passe par un capteur d'humidité, seul type qu'Apple Home affiche en pourcentage : la tuile parlera donc d'humidité. Désactivé par défaut, le niveau étant déjà visible sur le poêle."
+      },
+      "flameSensor": {
+        "title": "Capteur de température de flamme",
+        "type": "boolean",
+        "default": true,
+        "required": false,
+        "description": "Publie un accessoire capteur distinct affichant la température de flamme du poêle sur sa propre vignette."
+      },
+      "serviceGauge": {
+        "title": "Jauge de durée avant entretien",
+        "type": "boolean",
+        "default": true,
+        "required": false,
+        "description": "Ajoute dans la fiche du poêle un second bloc, à côté du niveau de pellets, indiquant en pourcentage ce qu'il reste avant le grand nettoyage."
       }
     }
   }

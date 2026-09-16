@@ -180,6 +180,8 @@ affiche la valeur brute à chaque apparition, à rapprocher de la notice.
 | `lowPelletThresholdPercent` | `20` | Seuil de l'alerte de niveau bas |
 | `autoDetectRefill` | `true` | Détection des pleins via l'avertissement du poêle |
 | `pelletSensorAccessory` | `false` | Tuile autonome pour le niveau de pellets |
+| `flameSensor` | `true` | Accessoire capteur de température de flamme |
+| `serviceGauge` | `true` | Second bloc : durée avant entretien |
 | `refillWarningCode` | `2` | Code `statusWarning` du couvercle ouvert |
 | `refillSwitch` | `true` | Interrupteur manuel dans HomeKit |
 
@@ -247,7 +249,8 @@ s'appuyer sur ce champ — c'est `statusWarning` qui porte l'information.
 
 | Accessoire | Service | Ce qu'Apple Home montre |
 |---|---|---|
-| `Poele` | `HeaterCooler` + `Fanv2` + `Battery` | marche/arrêt, température, consigne, et un **bloc dédié au niveau de pellets** |
+| `Poele` | `HeaterCooler` + 2 × `Fanv2` + `Battery` | marche/arrêt, température, consigne, et **deux blocs** : niveau de pellets, durée avant entretien |
+| `Poele flamme` | `TemperatureSensor` | température de flamme, sur sa propre vignette |
 | `Poele plein` | `Switch` | interrupteur d'enregistrement du plein |
 | `Poele entretien` | `ContactSensor` + `FilterMaintenance` | ouvert = entretien à faire |
 | `Poele défaut` | `ContactSensor` | ouvert = le poêle signale un défaut |

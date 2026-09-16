@@ -32,7 +32,7 @@ const DEFAULT_REFILL_WARNING_CODE = 2
 // caractéristiques, de bornes ou de permissions : Homebridge restaure les
 // accessoires depuis son cache, et un setProps sur un service restauré n'est
 // pas repris. Le service est alors reconstruit une fois, proprement.
-const SERVICE_SHAPE = 5
+const SERVICE_SHAPE = 6
 
 module.exports = (api) => {
   api.registerPlatform(PLATFORM_NAME, RIKAFirenetPlatform)
@@ -175,6 +175,7 @@ class RIKAFirenetPlatform {
     this.CurrentTemperature = 20
     this.TargetTemperature = 20
     this.HeatingPower = 70 // puissance de chauffe du poêle, en %
+    this.FlameTemperature = 20
     this.currentControls = null
     this.latestUpdateTimestamp = 0
     this.updateInFlight = null
@@ -198,6 +199,8 @@ class RIKAFirenetPlatform {
     this.serviceCountdownKg = null
     this.serviceLifePercent = 100
     this.serviceDue = false
+    this.flameSensor = this.config.flameSensor !== false
+    this.serviceGauge = this.config.serviceGauge !== false
     this.faultActive = false
     this.faultDetail = ''
 
@@ -357,6 +360,30 @@ class RIKAFirenetPlatform {
         })
     this.services.gauge = gauge
 
+    // Durée avant entretien, sur le même principe : un second bloc dans la
+    // fiche, exprimé en pourcentage de l'intervalle de nettoyage restant.
+    if (this.serviceGauge) {
+      const svcGauge = this.serviceOn(heater.accessory, this.Service.Fanv2,
+        `${this.name} entretien`, 'servicegauge')
+      svcGauge.getCharacteristic(C.Active)
+          .onGet(() => C.Active.ACTIVE)
+          .onSet(() => {
+            setTimeout(() => svcGauge.updateCharacteristic(C.Active, C.Active.ACTIVE), GAUGE_REVERT_DELAY)
+          })
+      const svcLevel = svcGauge.getCharacteristic(C.RotationSpeed)
+      svcLevel.setProps({ minValue: 0, maxValue: 100, minStep: 1 })
+      svcLevel.updateValue(this.serviceLifePercent)
+      svcLevel.onGet(() => this.serviceLifePercent)
+          .onSet(() => {
+            setTimeout(() => svcLevel.updateValue(this.serviceLifePercent), GAUGE_REVERT_DELAY)
+          })
+      this.services.serviceGauge = svcGauge
+    } else {
+      const stale = heater.accessory.getServiceById(this.Service.Fanv2, 'servicegauge')
+      if (stale) heater.accessory.removeService(stale)
+      this.services.serviceGauge = null
+    }
+
     // Le service Battery double l'information et porte l'alerte de niveau bas.
     const heaterBattery = this.serviceOn(heater.accessory, this.Service.Battery, `${this.name} pellets`)
     heaterBattery.getCharacteristic(C.BatteryLevel).onGet(() => this.pelletLevelPercent)
@@ -447,7 +474,25 @@ class RIKAFirenetPlatform {
       ;(service.isNew ? created : []).push(service.accessory)
     }
 
-    // --- 5. Défaut ---------------------------------------------------------
+    // --- 5. Température de flamme ------------------------------------------
+    // Un accessoire distinct : seul un accessoire capteur affiche sa valeur
+    // sur une vignette.
+    const flame = this.buildAccessory('flame', `${this.name} flamme`, Cat.SENSOR, this.flameSensor)
+    if (flame.unwanted) {
+      if (flame.accessory) removed.push(flame.accessory)
+      this.services.flame = null
+    } else {
+      this.describe(flame.accessory, 'Température de flamme', 'flame')
+      const probe = this.serviceOn(flame.accessory, this.Service.TemperatureSensor, `${this.name} flamme`)
+      // La flamme dépasse largement les 100 °C par défaut du type.
+      probe.getCharacteristic(C.CurrentTemperature)
+          .setProps({ minValue: -50, maxValue: 1000, minStep: 1 })
+          .onGet(() => this.FlameTemperature)
+      this.services.flame = probe
+      ;(flame.isNew ? created : []).push(flame.accessory)
+    }
+
+    // --- 6. Défaut ---------------------------------------------------------
     const fault = this.buildAccessory('fault', `${this.name} défaut`, Cat.SENSOR,
       this.healthSensors)
     if (fault.unwanted) {
@@ -566,6 +611,11 @@ class RIKAFirenetPlatform {
       } else {
         this.CurrentHeaterCoolerState = 1 // IDLE, sous tension sans flamme
       }
+      const flameTemp = Number(body.sensors.inputFlameTemperature)
+      if (Number.isFinite(flameTemp)) {
+        this.FlameTemperature = flameTemp
+      }
+
       // Puissance de chauffe : relevée pour le journal. Elle n'occupe plus le
       // curseur, désormais dédié au niveau de pellets.
       const power = Number(body.controls.heatingPower)
@@ -593,6 +643,9 @@ class RIKAFirenetPlatform {
     h.getCharacteristic(C.CurrentHeaterCoolerState).updateValue(this.CurrentHeaterCoolerState)
     h.getCharacteristic(C.CurrentTemperature).updateValue(this.CurrentTemperature)
     h.getCharacteristic(C.HeatingThresholdTemperature).updateValue(this.TargetTemperature)
+    if (this.services.flame) {
+      this.services.flame.getCharacteristic(C.CurrentTemperature).updateValue(this.FlameTemperature)
+    }
   }
 
   async updateCharacteristic (controlItem, value) {
@@ -690,6 +743,10 @@ class RIKAFirenetPlatform {
       this.services.serviceFilter.getCharacteristic(C.FilterChangeIndication)
           .updateValue(this.serviceDue ? C.FilterChangeIndication.CHANGE_FILTER : C.FilterChangeIndication.FILTER_OK)
       this.services.serviceFilter.getCharacteristic(C.FilterLifeLevel)
+          .updateValue(this.serviceLifePercent)
+    }
+    if (this.services.serviceGauge) {
+      this.services.serviceGauge.getCharacteristic(C.RotationSpeed)
           .updateValue(this.serviceLifePercent)
     }
     if (this.services.serviceDue) {

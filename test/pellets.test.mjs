@@ -251,6 +251,7 @@ function withStatus (platform, { onOff, mainState, subState = 0, power = 70, tem
       controls: { onOff, heatingPower: power, targetTemperature: target, revision: 1 },
       sensors: {
         inputRoomTemperature: temp, statusMainState: mainState, statusSubState: subState,
+        inputFlameTemperature: 320,
         parameterFeedRateTotal: 2072, statusWarning: 0,
         parameterServiceCountdownKg: 350, parameterKgTillCleaning: 700,
         statusError: 0, statusSubError: 0
@@ -281,6 +282,29 @@ await (async () => {
   await withStatus(a, { onOff: true, mainState: 4, temp: '23.8', target: '22' })
   check('températures relues, y compris en chaîne de caractères', () => {
     assert.equal(a.CurrentTemperature, '23.8'); assert.equal(a.TargetTemperature, '22')
+  })
+})()
+
+console.log('\n=== FLAMME ET JAUGE D\'ENTRETIEN ===')
+await (async () => {
+  const a = make({})
+  await withStatus(a, { onOff: true, mainState: 4 })
+  check('température de flamme relevée', () => {
+    assert.equal(a.FlameTemperature, 320)
+  })
+  const b = make({ serviceAlertKg: 25 })
+  b.updateHealth(health(350))
+  check('jauge d\'entretien = pourcentage restant', () => {
+    assert.equal(b.serviceLifePercent, 50)
+  })
+  b.updateHealth(health(70))
+  check('jauge suit le décompte du poêle', () => {
+    assert.equal(b.serviceLifePercent, 10)
+  })
+  const c = make({ flameSensor: false, serviceGauge: false })
+  check('les deux sont désactivables', () => {
+    assert.equal(c.flameSensor, false)
+    assert.equal(c.serviceGauge, false)
   })
 })()
 
