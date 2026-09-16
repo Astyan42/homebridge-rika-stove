@@ -293,6 +293,16 @@ class RIKAFirenetPlatform {
           .onSet((value) => this.setTargetTemperature(value))
     t.getCharacteristic(C.TemperatureDisplayUnits)
         .onGet(() => C.TemperatureDisplayUnits.CELSIUS)
+    // StatusFault a été porté par ce service jusqu'en 2.0.0. Homebridge le
+    // restaure depuis son cache : il resterait exposé avec une valeur figée.
+    const staleFault = t.testCharacteristic && t.testCharacteristic(C.StatusFault)
+      ? t.getCharacteristic(C.StatusFault)
+      : null
+    if (staleFault && typeof t.removeCharacteristic === 'function') {
+      t.removeCharacteristic(staleFault)
+      this.log.debug('StatusFault retiré du thermostat (hérité du cache 2.0.0)')
+    }
+
     this.services.thermostat = t
     ;(thermostat.isNew ? created : []).push(thermostat.accessory)
 
