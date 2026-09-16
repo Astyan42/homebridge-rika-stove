@@ -3,7 +3,7 @@
   "pluginType": "accessory",
   "singular": false,
   "headerDisplay": "Pilotage d'un poêle RIKA Corso via le service cloud FireNet.",
-  "footerDisplay": "Le `stoveID` est visible dans l'URL de rika-firenet.com une fois connecté : `/web/summary/<stoveID>`.",
+  "footerDisplay": "Le `stoveID` est visible dans l'URL de rika-firenet.com une fois connecté : `/web/summary/<stoveID>`.\n\nLe niveau de pellets est **calculé**, le poêle n'ayant aucun capteur de niveau : il déduit le restant du compteur cumulatif du poêle et de la quantité relevée au dernier plein. La résolution est de 1 kg.",
   "schema": {
     "type": "object",
     "properties": {
@@ -51,6 +51,38 @@
         "minimum": 2000,
         "required": false,
         "description": "Temps maximum d'attente d'une réponse du cloud FireNet."
+      },
+      "hopperCapacityKg": {
+        "title": "Capacité du réservoir (kg)",
+        "type": "integer",
+        "default": 40,
+        "minimum": 1,
+        "maximum": 500,
+        "required": false,
+        "description": "Quantité de pellets que contient le réservoir une fois plein. Sert de base au calcul du niveau restant."
+      },
+      "lowPelletThresholdPercent": {
+        "title": "Seuil d'alerte niveau bas (%)",
+        "type": "integer",
+        "default": 20,
+        "minimum": 1,
+        "maximum": 99,
+        "required": false,
+        "description": "En dessous de ce pourcentage, HomeKit signale un niveau bas — exploitable dans une automatisation."
+      },
+      "autoDetectRefill": {
+        "title": "Détecter les pleins automatiquement",
+        "type": "boolean",
+        "default": true,
+        "required": false,
+        "description": "Enregistre un plein quand le couvercle du réservoir est refermé après avoir été ouvert. Décochez si un simple coup d'œil dans le réservoir est compté à tort comme un plein."
+      },
+      "refillSwitch": {
+        "title": "Exposer l'interrupteur « plein effectué »",
+        "type": "boolean",
+        "default": true,
+        "required": false,
+        "description": "Ajoute un interrupteur dans l'app Maison pour enregistrer un plein à la main. Il retombe de lui-même après activation."
       }
     }
   }

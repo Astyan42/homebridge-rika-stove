@@ -1,17 +1,19 @@
 {
   "name": "homebridge-rika-corso",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Plug-in to control RIKA Corso stoves via the FireNet cloud service using homebridge.",
   "main": "index.js",
   "scripts": {
-    "test": "node --check index.js"
+    "test": "node --check index.js && node test/pellets.test.mjs"
   },
   "keywords": [
-    "homebridge-plugin",
-    "rika",
     "firenet",
-    "stove",
-    "poele"
+    "homebridge-plugin",
+    "hopper",
+    "pellets",
+    "poele",
+    "rika",
+    "stove"
   ],
   "engines": {
     "node": "^20 || ^22 || ^24 || ^26",

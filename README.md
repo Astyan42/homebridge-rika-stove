@@ -84,6 +84,56 @@ chmod 600 /var/lib/homebridge/config.json
 Connectez-vous sur [rika-firenet.com](https://www.rika-firenet.com) : il
 apparaît dans l'URL de la page de résumé, `/web/summary/<stoveID>`.
 
+## Niveau de pellets
+
+Le poêle **n'a aucun capteur de niveau** dans son réservoir. Le plugin déduit
+le restant du compteur cumulatif de pellets consommés (`parameterFeedRateTotal`,
+en kg) et de la valeur relevée au dernier plein :
+
+```
+restant = capacité − (compteur actuel − compteur au dernier plein)
+```
+
+Le niveau est exposé dans HomeKit comme un **niveau de batterie** en pourcentage,
+avec l'indicateur « batterie faible » sous le seuil configuré — utilisable dans
+une automatisation pour être prévenu avant la panne sèche.
+
+### Enregistrer un plein
+
+Deux mécanismes, actifs ensemble par défaut :
+
+- **Automatique** — un plein est enregistré quand le couvercle du réservoir
+  (`inputCover`) est refermé après avoir été ouvert. Désactivable via
+  `autoDetectRefill` si un simple coup d'œil est compté à tort.
+- **Manuel** — un interrupteur « plein » dans l'app Maison, qui retombe de
+  lui-même. Désactivable via `refillSwitch`.
+
+### Options
+
+| Option | Défaut | Description |
+|---|---|---|
+| `hopperCapacityKg` | `40` | Capacité du réservoir plein, en kg |
+| `lowPelletThresholdPercent` | `20` | Seuil de l'alerte de niveau bas |
+| `autoDetectRefill` | `true` | Détection des pleins via le couvercle |
+| `refillSwitch` | `true` | Interrupteur manuel dans HomeKit |
+
+### Limites à connaître
+
+- **Résolution de 1 kg** : le compteur du poêle est entier.
+- **Le premier démarrage suppose le réservoir plein.** Si ce n'est pas le cas,
+  faites un vrai plein puis actionnez l'interrupteur.
+- Si le compteur du poêle repart en arrière (remise à zéro lors d'un entretien),
+  le plugin le détecte et se réancre en supposant le réservoir plein.
+- L'état est conservé dans `rika-pellets-<stoveID>.json`, dans le dossier de
+  stockage Homebridge, et survit donc aux redémarrages.
+
+### Autres données disponibles
+
+L'API FireNet expose aussi, non exploitées par le plugin pour l'instant :
+`parameterFeedRateService` (kg depuis l'entretien), `parameterServiceCountdownKg`
+(kg avant le prochain grand nettoyage), `parameterRuntimePellets` (heures de
+fonctionnement) et `parameterIgnitionCount` (nombre d'allumages).
+
 ## Caractéristiques HomeKit exposées
 
 Le poêle est présenté comme un `Thermostat` :
@@ -93,6 +143,9 @@ Le poêle est présenté comme un `Thermostat` :
 - `CurrentTemperature` — température ambiante mesurée par le poêle
 - `TargetTemperature` — consigne du mode Confort, de 14 à 28 °C
 - `TemperatureDisplayUnits` — Celsius
+
+Plus un service `Battery` (`BatteryLevel`, `StatusLowBattery`) pour le niveau de
+pellets, et un `Switch` « plein » si `refillSwitch` est actif.
 
 ## Modèles
 

@@ -7,6 +7,8 @@
 //
 // Ce programme est un logiciel libre sous licence GNU GPLv3. Voir LICENSE.
 
+const fs = require('node:fs')
+
 let Service, Characteristic
 
 const BASE_URL = 'https://www.rika-firenet.com'
@@ -16,6 +18,9 @@ const DEFAULT_UPDATE_INTERVAL = 60000
 const CACHE_TTL = 5000
 const RELOGIN_DELAY = 30000
 const CONFIRM_DELAY = 2000
+const DEFAULT_HOPPER_CAPACITY_KG = 40
+const DEFAULT_LOW_PELLET_PERCENT = 20
+const REFILL_SWITCH_RESET_DELAY = 1000
 
 module.exports = (homebridge) => {
   Service = homebridge.hap.Service
@@ -24,9 +29,10 @@ module.exports = (homebridge) => {
 }
 
 class RIKAFirenetAccessory {
-  constructor (log, config) {
+  constructor (log, config, api) {
     this.log = log
     this.config = config
+    this.api = api
 
     // Valeurs par défaut
     this.CurrentHeatingCoolingState = 0 // OFF, HEAT, COOL (0, 1, 2)
@@ -47,6 +53,20 @@ class RIKAFirenetAccessory {
 
     this.timeout = this.config.timeout || DEFAULT_TIMEOUT
     this.updateInterval = this.config.updateInterval || DEFAULT_UPDATE_INTERVAL
+
+    // --- Suivi du niveau de pellets ---
+    // Le poêle n'a aucun capteur de niveau : on déduit le restant du compteur
+    // cumulatif parameterFeedRateTotal (en kg, résolution 1 kg) et de la
+    // quantité relevée lors du dernier plein.
+    this.hopperCapacityKg = Number(this.config.hopperCapacityKg) || DEFAULT_HOPPER_CAPACITY_KG
+    this.lowPelletPercent = Number(this.config.lowPelletThresholdPercent) || DEFAULT_LOW_PELLET_PERCENT
+    this.autoDetectRefill = this.config.autoDetectRefill !== false
+    this.pelletState = { feedRateTotalAtRefill: null, lastRefillAt: null }
+    this.lastFeedRateTotal = null
+    this.previousCoverClosed = null
+    this.pelletsRemainingKg = this.hopperCapacityKg
+    this.pelletLevelPercent = 100
+    this.loadPelletState()
 
     this.loginToFirenet(() => {
       this.updateStatus()
@@ -104,7 +124,39 @@ class RIKAFirenetAccessory {
         .on('get', (callback) => callback(null, Characteristic.TemperatureDisplayUnits.CELSIUS))
         .on('set', (value, callback) => callback(null))
 
-    return [informationService, this.service]
+    // --- Niveau de pellets, exposé comme un niveau de batterie ---
+    const BatteryService = Service.Battery || Service.BatteryService
+    this.batteryService = new BatteryService(`${this.config.name} pellets`)
+    this.batteryService.getCharacteristic(Characteristic.BatteryLevel)
+        .on('get', (callback) => callback(null, this.pelletLevelPercent))
+    this.batteryService.getCharacteristic(Characteristic.StatusLowBattery)
+        .on('get', (callback) => callback(null, this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0))
+    this.batteryService.setCharacteristic(
+      Characteristic.ChargingState,
+      Characteristic.ChargingState.NOT_CHARGEABLE
+    )
+
+    const services = [informationService, this.service, this.batteryService]
+
+    // --- Interrupteur « plein effectué » ---
+    if (this.config.refillSwitch !== false) {
+      this.refillService = new Service.Switch(`${this.config.name} plein`, 'refill')
+      this.refillService.getCharacteristic(Characteristic.On)
+          .on('get', (callback) => callback(null, false))
+          .on('set', (value, callback) => {
+            if (value) {
+              this.manualRefill().catch((error) => this.log('Erreur lors du plein:', error.message))
+              // Interrupteur sans état : il retombe de lui-même.
+              setTimeout(() => {
+                this.refillService.getCharacteristic(Characteristic.On).updateValue(false)
+              }, REFILL_SWITCH_RESET_DELAY)
+            }
+            callback(null)
+          })
+      services.push(this.refillService)
+    }
+
+    return services
   }
 
   // ---------------------------------------------------------------------------
@@ -291,6 +343,9 @@ class RIKAFirenetAccessory {
         this.latestUpdateTimestamp = Date.now()
         this.log.debug(`✓ Statut mis à jour - Temp: ${this.CurrentTemperature}°C / Cible: ${this.TargetTemperature}°C / État: ${isOn ? 'ON' : 'OFF'}`)
 
+        // Niveau de pellets déduit du compteur cumulatif
+        this.updatePelletLevel(body.sensors)
+
         // Mise à jour des valeurs dans HomeKit
         this.service.getCharacteristic(Characteristic.CurrentHeatingCoolingState).updateValue(this.CurrentHeatingCoolingState)
         this.service.getCharacteristic(Characteristic.TargetHeatingCoolingState).updateValue(this.TargetHeatingCoolingState)
@@ -307,6 +362,130 @@ class RIKAFirenetAccessory {
     } else {
       this.log(`Erreur inattendue: ${status}`)
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Niveau de pellets
+  // ---------------------------------------------------------------------------
+
+  get pelletStatePath () {
+    const dir = (this.api && this.api.user && typeof this.api.user.storagePath === 'function')
+      ? this.api.user.storagePath()
+      : '/var/lib/homebridge'
+    return `${dir}/rika-pellets-${this.config.stoveID}.json`
+  }
+
+  loadPelletState () {
+    try {
+      const raw = fs.readFileSync(this.pelletStatePath, 'utf8')
+      const saved = JSON.parse(raw)
+      if (Number.isFinite(saved.feedRateTotalAtRefill)) {
+        this.pelletState = {
+          feedRateTotalAtRefill: saved.feedRateTotalAtRefill,
+          lastRefillAt: saved.lastRefillAt || null
+        }
+        this.log.debug(`État pellets rechargé: plein à ${saved.feedRateTotalAtRefill} kg (${saved.lastRefillAt})`)
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        this.log('Impossible de relire l\'état des pellets:', error.message)
+      }
+    }
+  }
+
+  savePelletState () {
+    try {
+      fs.writeFileSync(this.pelletStatePath, JSON.stringify({
+        stoveID: this.config.stoveID,
+        hopperCapacityKg: this.hopperCapacityKg,
+        feedRateTotalAtRefill: this.pelletState.feedRateTotalAtRefill,
+        lastRefillAt: this.pelletState.lastRefillAt
+      }, null, 2), { mode: 0o600 })
+    } catch (error) {
+      this.log('Impossible d\'enregistrer l\'état des pellets:', error.message)
+    }
+  }
+
+  registerRefill (feedRateTotal) {
+    this.pelletState = {
+      feedRateTotalAtRefill: feedRateTotal,
+      lastRefillAt: new Date().toISOString()
+    }
+    this.savePelletState()
+    this.pelletsRemainingKg = this.hopperCapacityKg
+    this.pelletLevelPercent = 100
+    this.publishPelletLevel()
+  }
+
+  // Appelé par l'interrupteur « plein » dans HomeKit.
+  async manualRefill () {
+    if (this.lastFeedRateTotal === null) {
+      await this.updateStatus()
+    }
+    if (this.lastFeedRateTotal === null) {
+      this.log('✗ Plein non enregistré : compteur de pellets indisponible')
+      return
+    }
+    this.log(`✓ Plein enregistré manuellement (compteur à ${this.lastFeedRateTotal} kg) — réservoir à ${this.hopperCapacityKg} kg`)
+    this.registerRefill(this.lastFeedRateTotal)
+  }
+
+  updatePelletLevel (sensors) {
+    const total = Number(sensors.parameterFeedRateTotal)
+    if (!Number.isFinite(total)) {
+      return
+    }
+    this.lastFeedRateTotal = total
+
+    // Détection d'un plein : couvercle du réservoir ouvert puis refermé.
+    const coverClosed = sensors.inputCover === true
+    if (this.autoDetectRefill && this.previousCoverClosed === false && coverClosed) {
+      this.log(`✓ Couvercle du réservoir refermé — plein enregistré (compteur à ${total} kg)`)
+      this.previousCoverClosed = coverClosed
+      this.registerRefill(total)
+      return
+    }
+    this.previousCoverClosed = coverClosed
+
+    if (this.pelletState.feedRateTotalAtRefill === null) {
+      // Première exécution : on ancre sur la valeur courante en supposant le
+      // réservoir plein. À corriger avec l'interrupteur « plein » si besoin.
+      this.log(`Premier relevé du compteur de pellets (${total} kg) — réservoir supposé plein (${this.hopperCapacityKg} kg)`)
+      this.registerRefill(total)
+      return
+    }
+
+    let consumed = total - this.pelletState.feedRateTotalAtRefill
+    if (consumed < 0) {
+      // Le compteur du poêle a été remis à zéro (entretien) : on réancre.
+      this.log(`Compteur de pellets reparti en arrière (${total} kg < ${this.pelletState.feedRateTotalAtRefill} kg) — réancrage`)
+      this.registerRefill(total)
+      return
+    }
+
+    const remaining = Math.max(0, this.hopperCapacityKg - consumed)
+    const percent = Math.max(0, Math.min(100, Math.round((remaining / this.hopperCapacityKg) * 100)))
+    const wasLow = this.pelletLevelPercent <= this.lowPelletPercent
+
+    this.pelletsRemainingKg = remaining
+    this.pelletLevelPercent = percent
+    this.publishPelletLevel()
+
+    if (percent <= this.lowPelletPercent && !wasLow) {
+      this.log(`⚠ Niveau de pellets bas : ${percent} % — environ ${remaining} kg restants sur ${this.hopperCapacityKg} kg`)
+    } else {
+      this.log.debug(`Pellets: ${percent} % — ~${remaining} kg restants, ${consumed} kg consommés depuis le plein`)
+    }
+  }
+
+  publishPelletLevel () {
+    if (!this.batteryService) {
+      return
+    }
+    this.batteryService.getCharacteristic(Characteristic.BatteryLevel)
+        .updateValue(this.pelletLevelPercent)
+    this.batteryService.getCharacteristic(Characteristic.StatusLowBattery)
+        .updateValue(this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0)
   }
 
   getCharacteristic (characteristic, callback) {
