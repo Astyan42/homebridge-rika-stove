@@ -9,6 +9,23 @@ d'un module FireNet, exposé dans HomeKit comme un thermostat. Il couvre le
 > 31 octobre 2025. Aucun dépôt public n'étant déclaré dans les métadonnées npm,
 > ce dépôt repart du tarball npm. Licence GNU GPLv3 conservée.
 
+## Migration 1.x vers 2.0
+
+La version 2.0 transforme le plugin en **plateforme** afin de publier un
+accessoire par indicateur. Dans `config.json`, déplacez votre entrée du
+tableau `accessories` vers `platforms` et remplacez la clé `accessory` par
+`platform` :
+
+```diff
+-  "accessories": [ { "accessory": "RIKAFirenet", ... } ]
++  "platforms":   [ { "platform":  "RIKAFirenet", ... } ]
+```
+
+Apple Home découvrira quatre nouveaux accessoires à ranger dans vos pièces.
+L'ancien thermostat, publié par le plugin en mode accessoire, disparaît et est
+remplacé par le nouveau : les automatisations qui l'utilisaient doivent être
+vérifiées.
+
 ## Ce que ce fork change
 
 | Changement | Pourquoi |
@@ -45,14 +62,14 @@ npm install -g git+https://github.com/<compte>/homebridge-rika-corso.git
 Le plus simple est de passer par l'onglet *Plugins* de l'interface Homebridge,
 qui affiche un formulaire depuis la version 1.1.0.
 
-En éditant `config.json` à la main, l'accessoire se déclare dans le tableau
-`accessories` :
+En éditant `config.json` à la main, la plateforme se déclare dans le tableau
+`platforms` :
 
 ```json
 {
-  "accessories": [
+  "platforms": [
     {
-      "accessory": "RIKAFirenet",
+      "platform": "RIKAFirenet",
       "name": "Poele",
       "FirenetEmail": "mon@adresse.fr",
       "FirenetPassword": "monMotDePasse",
@@ -64,8 +81,8 @@ En éditant `config.json` à la main, l'accessoire se déclare dans le tableau
 
 | Option | Requis | Défaut | Description |
 |---|---|---|---|
-| `accessory` | oui | — | Doit valoir exactement `RIKAFirenet` |
-| `name` | oui | — | Nom affiché dans l'app Maison |
+| `platform` | oui | — | Doit valoir exactement `RIKAFirenet` |
+| `name` | oui | — | Préfixe des cinq accessoires |
 | `FirenetEmail` | oui | — | Identifiant du compte rika-firenet.com |
 | `FirenetPassword` | oui | — | Mot de passe du compte |
 | `stoveID` | oui | — | Identifiant du poêle |
@@ -225,22 +242,38 @@ Le comportement de `inputCover` reste inexpliqué : observé à `true` poêle
 d'état, et immobile pendant une ouverture confirmée du couvercle. Ne pas
 s'appuyer sur ce champ — c'est `statusWarning` qui porte l'information.
 
-## Caractéristiques HomeKit exposées
+## Accessoires publiés
 
-Le poêle est présenté comme un `Thermostat` :
+Le plugin publie **cinq accessoires distincts**, et non un seul portant
+plusieurs services. C'est indispensable : Apple Home réduit un accessoire
+ponté à une tuile unique, celle de son service principal, et **n'affiche pas**
+les services secondaires (`Battery`, `FilterMaintenance`, `ContactSensor`,
+`Switch`). Regroupés, tous les indicateurs sauf le thermostat étaient
+invisibles.
 
-- `CurrentHeatingCoolingState` — OFF / HEAT
-- `TargetHeatingCoolingState` — OFF / HEAT
-- `CurrentTemperature` — température ambiante mesurée par le poêle
-- `TargetTemperature` — consigne du mode Confort, de 14 à 28 °C
-- `TemperatureDisplayUnits` — Celsius
+| Accessoire | Service | Ce qu'Apple Home montre |
+|---|---|---|
+| `Poele` | `Thermostat` + `StatusFault` | température, consigne, marche/arrêt |
+| `Poele pellets` | `HumiditySensor` + `Battery` | pourcentage de pellets restants |
+| `Poele plein` | `Switch` | interrupteur d'enregistrement du plein |
+| `Poele entretien` | `ContactSensor` + `FilterMaintenance` | ouvert = entretien à faire |
+| `Poele défaut` | `ContactSensor` | ouvert = le poêle signale un défaut |
 
-Plus :
+### Pourquoi un capteur d'humidité pour les pellets
 
-- un service `Battery` (`BatteryLevel`, `StatusLowBattery`) pour le niveau de pellets ;
-- un `Switch` « plein » si `refillSwitch` est actif ;
-- un `FilterMaintenance` « entretien » et un `ContactSensor` « défaut » si
-  `healthSensors` est actif, ainsi que `StatusFault` sur le thermostat.
+Apple Home ne crée aucune tuile pour un service `Battery` seul, et n'affiche
+un pourcentage que pour quelques types de capteurs. Le capteur d'humidité est
+le seul qui présente une valeur en pourcentage dans une tuile lisible. Le
+libellé est donc trompeur — la tuile parlera d'humidité — mais la valeur
+affichée est bien le niveau de pellets. Le service `Battery` est conservé sur
+le même accessoire pour l'alerte de niveau bas et pour les applications qui
+l'affichent correctement, comme Eve.
+
+### Identifiants stables
+
+Chaque accessoire dérive son UUID de `stoveID` et de son rôle. Redémarrer
+Homebridge ou mettre le plugin à jour ne recrée donc pas les accessoires :
+leurs pièces et leurs automatisations sont conservées.
 
 ## Modèles
 

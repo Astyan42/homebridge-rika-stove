@@ -1,18 +1,18 @@
 {
   "pluginAlias": "RIKAFirenet",
-  "pluginType": "accessory",
-  "singular": false,
-  "headerDisplay": "Pilotage d'un poêle RIKA Corso via le service cloud FireNet.",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Pilotage d'un poêle RIKA via le service cloud FireNet. Publie cinq accessoires distincts : thermostat, niveau de pellets, interrupteur de plein, entretien et défaut — afin qu'Apple Home donne une tuile à chacun.",
   "footerDisplay": "Le `stoveID` est visible dans l'URL de rika-firenet.com une fois connecté : `/web/summary/<stoveID>`.\n\nLe niveau de pellets est **calculé**, le poêle n'ayant aucun capteur de niveau : il déduit le restant du compteur cumulatif du poêle et de la quantité relevée au dernier plein. La résolution est de 1 kg.",
   "schema": {
     "type": "object",
     "properties": {
       "name": {
-        "title": "Nom de l'accessoire",
+        "title": "Nom de base",
         "type": "string",
         "default": "Poele",
         "required": true,
-        "description": "Nom affiché dans l'application Maison."
+        "description": "Sert de préfixe aux cinq accessoires : « Poele », « Poele pellets », « Poele plein », « Poele entretien », « Poele défaut »."
       },
       "FirenetEmail": {
         "title": "Adresse e-mail FireNet",

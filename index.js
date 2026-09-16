@@ -1,6 +1,6 @@
 'use strict'
 
-// homebridge-rika-corso — pilotage des poêles RIKA Corso via le cloud FireNet.
+// homebridge-rika-corso — pilotage des poêles RIKA via le cloud FireNet.
 //
 // Copyright (C) 2025 Maël Laroque (@mael50)
 // Fork maintenu par Jérémy Deveaux.
@@ -9,208 +9,49 @@
 
 const fs = require('node:fs')
 
-let Service, Characteristic
+const PLUGIN_NAME = 'homebridge-rika-corso'
+const PLATFORM_NAME = 'RIKAFirenet'
 
 const BASE_URL = 'https://www.rika-firenet.com'
 const LOGIN_URL = `${BASE_URL}/web/login`
+
 const DEFAULT_TIMEOUT = 10000
 const DEFAULT_UPDATE_INTERVAL = 60000
-const CACHE_TTL = 5000
 const RELOGIN_DELAY = 30000
 const CONFIRM_DELAY = 2000
+const REFILL_SWITCH_RESET_DELAY = 1000
 const DEFAULT_HOPPER_CAPACITY_KG = 40
 const DEFAULT_LOW_PELLET_PERCENT = 20
-const REFILL_SWITCH_RESET_DELAY = 1000
 const DEFAULT_SERVICE_ALERT_KG = 25
 // Code d'avertissement du poêle signalant le couvercle du réservoir ouvert.
-// Mesuré sur un RIKA Sumo : statusWarning passe de 0 à 2 à l'ouverture.
+// Mesuré sur un RIKA Sumo : statusWarning passe de 0 à 2 à l'ouverture, et
+// revient à 0 à la fermeture. La porte du foyer ne lève aucun code.
 const DEFAULT_REFILL_WARNING_CODE = 2
 
-module.exports = (homebridge) => {
-  Service = homebridge.hap.Service
-  Characteristic = homebridge.hap.Characteristic
-  homebridge.registerAccessory('RIKAFirenet', RIKAFirenetAccessory)
+module.exports = (api) => {
+  api.registerPlatform(PLATFORM_NAME, RIKAFirenetPlatform)
 }
 
-class RIKAFirenetAccessory {
-  constructor (log, config, api) {
+// ---------------------------------------------------------------------------
+// Client FireNet : fetch natif, gestion explicite des cookies de session.
+// `request` (abandonné depuis 2020) apportait 6 vulnérabilités sans correctif.
+// ---------------------------------------------------------------------------
+
+class FirenetClient {
+  constructor (log, { email, password, stoveID, timeout }) {
     this.log = log
-    this.config = config
-    this.api = api
-
-    // Valeurs par défaut
-    this.CurrentHeatingCoolingState = 0 // OFF, HEAT, COOL (0, 1, 2)
-    this.TargetHeatingCoolingState = 0 // OFF, HEAT, COOL, AUTO (0, 1, 2, 3)
-    this.CurrentTemperature = 20
-    this.TargetTemperature = 20
-
-    this.latestUpdateTimestamp = 0
-    this.connected = false
-
-    // Session HTTP : remplace le cookie jar de `request`
+    this.email = email
+    this.password = password
+    this.stoveID = stoveID
+    this.timeout = timeout || DEFAULT_TIMEOUT
     this.cookies = new Map()
-    // Mise à jour en vol, partagée par tous les appelants simultanés
-    this.updateInFlight = null
-
-    // Stockage des contrôles complets pour les mises à jour
-    this.currentControls = null
-
-    this.timeout = this.config.timeout || DEFAULT_TIMEOUT
-    this.updateInterval = this.config.updateInterval || DEFAULT_UPDATE_INTERVAL
-
-    // --- Suivi du niveau de pellets ---
-    // Le poêle n'a aucun capteur de niveau : on déduit le restant du compteur
-    // cumulatif parameterFeedRateTotal (en kg, résolution 1 kg) et de la
-    // quantité relevée lors du dernier plein.
-    this.hopperCapacityKg = Number(this.config.hopperCapacityKg) || DEFAULT_HOPPER_CAPACITY_KG
-    this.lowPelletPercent = Number(this.config.lowPelletThresholdPercent) || DEFAULT_LOW_PELLET_PERCENT
-    // Le plein est détecté sur le code d'avertissement du poêle, pas sur un
-    // contact : aucun contact de la charge utile FireNet ne bouge à l'ouverture.
-    this.autoDetectRefill = this.config.autoDetectRefill !== false
-    this.refillWarningCode = Number.isFinite(Number(this.config.refillWarningCode))
-      ? Number(this.config.refillWarningCode)
-      : DEFAULT_REFILL_WARNING_CODE
-    this.previousWarning = null
-    this.pelletState = { feedRateTotalAtRefill: null, lastRefillAt: null }
-    this.lastFeedRateTotal = null
-    this.pelletsRemainingKg = this.hopperCapacityKg
-    this.pelletLevelPercent = 100
-    this.loadPelletState()
-
-    // --- Santé du poêle ---
-    this.serviceAlertKg = Number(this.config.serviceAlertKg) || DEFAULT_SERVICE_ALERT_KG
-    this.healthSensors = this.config.healthSensors !== false
-    this.serviceCountdownKg = null
-    this.serviceLifePercent = 100
-    this.serviceDue = false
-    this.faultActive = false
-    this.faultDetail = ''
-
-    this.loginToFirenet(() => {
-      this.updateStatus()
-      // Démarrer les mises à jour périodiques
-      this.startPeriodicUpdates()
-    })
-
-    // Utilisation d'un Thermostat pour avoir les contrôles de température
-    this.service = new Service.Thermostat(this.config.name)
+    this.connected = false
   }
-
-  getServices () {
-    const informationService = new Service.AccessoryInformation()
-        .setCharacteristic(Characteristic.Manufacturer, 'RIKA')
-        .setCharacteristic(Characteristic.Model, 'Firenet')
-        .setCharacteristic(Characteristic.SerialNumber, this.config.stoveID || '0000000000')
-
-    // Configuration des caractéristiques du thermostat
-    this.service.getCharacteristic(Characteristic.CurrentHeatingCoolingState)
-        .on('get', this.getCharacteristic.bind(this, 'CurrentHeatingCoolingState'))
-        .setProps({
-          maxValue: 2,
-          minValue: 0,
-          validValues: [0, 1, 2] // OFF, HEAT, COOL
-        })
-
-    this.service.getCharacteristic(Characteristic.TargetHeatingCoolingState)
-        .on('get', this.getCharacteristic.bind(this, 'TargetHeatingCoolingState'))
-        .on('set', this.setTargetHeatingCoolingState.bind(this))
-        .setProps({
-          maxValue: 1,
-          minValue: 0,
-          validValues: [0, 1] // OFF, HEAT seulement (pas de COOL ni AUTO)
-        })
-
-    this.service.getCharacteristic(Characteristic.CurrentTemperature)
-        .on('get', this.getCharacteristic.bind(this, 'CurrentTemperature'))
-        .setProps({
-          minValue: -50,
-          maxValue: 100,
-          minStep: 0.1
-        })
-
-    this.service.getCharacteristic(Characteristic.TargetTemperature)
-        .on('get', this.getCharacteristic.bind(this, 'TargetTemperature'))
-        .on('set', this.setTargetTemperature.bind(this))
-        .setProps({
-          minValue: 14,
-          maxValue: 28,
-          minStep: 1
-        })
-
-    // Unités de température en Celsius
-    this.service.getCharacteristic(Characteristic.TemperatureDisplayUnits)
-        .on('get', (callback) => callback(null, Characteristic.TemperatureDisplayUnits.CELSIUS))
-        .on('set', (value, callback) => callback(null))
-
-    // --- Niveau de pellets, exposé comme un niveau de batterie ---
-    const BatteryService = Service.Battery || Service.BatteryService
-    this.batteryService = new BatteryService(`${this.config.name} pellets`)
-    this.batteryService.getCharacteristic(Characteristic.BatteryLevel)
-        .on('get', (callback) => callback(null, this.pelletLevelPercent))
-    this.batteryService.getCharacteristic(Characteristic.StatusLowBattery)
-        .on('get', (callback) => callback(null, this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0))
-    this.batteryService.setCharacteristic(
-      Characteristic.ChargingState,
-      Characteristic.ChargingState.NOT_CHARGEABLE
-    )
-
-    const services = [informationService, this.service, this.batteryService]
-
-    // --- Santé : entretien et défaut ---
-    if (this.healthSensors) {
-      // L'entretien est présenté comme un filtre : HomeKit affiche un
-      // pourcentage de vie restante et un indicateur « à remplacer ».
-      this.serviceService = new Service.FilterMaintenance(`${this.config.name} entretien`, 'service')
-      this.serviceService.getCharacteristic(Characteristic.FilterChangeIndication)
-          .on('get', (callback) => callback(null, this.serviceDue
-            ? Characteristic.FilterChangeIndication.CHANGE_FILTER
-            : Characteristic.FilterChangeIndication.FILTER_OK))
-      this.serviceService.getCharacteristic(Characteristic.FilterLifeLevel)
-          .on('get', (callback) => callback(null, this.serviceLifePercent))
-      services.push(this.serviceService)
-
-      // Un contact est le type le plus exploitable en automatisation :
-      // ouvert = le poêle signale un défaut.
-      this.faultService = new Service.ContactSensor(`${this.config.name} défaut`, 'fault')
-      this.faultService.getCharacteristic(Characteristic.ContactSensorState)
-          .on('get', (callback) => callback(null, this.faultActive
-            ? Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
-            : Characteristic.ContactSensorState.CONTACT_DETECTED))
-      services.push(this.faultService)
-    }
-
-    // --- Interrupteur « plein effectué » ---
-    if (this.config.refillSwitch !== false) {
-      this.refillService = new Service.Switch(`${this.config.name} plein`, 'refill')
-      this.refillService.getCharacteristic(Characteristic.On)
-          .on('get', (callback) => callback(null, false))
-          .on('set', (value, callback) => {
-            if (value) {
-              this.manualRefill().catch((error) => this.log('Erreur lors du plein:', error.message))
-              // Interrupteur sans état : il retombe de lui-même.
-              setTimeout(() => {
-                this.refillService.getCharacteristic(Characteristic.On).updateValue(false)
-              }, REFILL_SWITCH_RESET_DELAY)
-            }
-            callback(null)
-          })
-      services.push(this.refillService)
-    }
-
-    return services
-  }
-
-  // ---------------------------------------------------------------------------
-  // Couche HTTP : fetch natif + gestion manuelle des cookies de session.
-  // `request` (abandonné depuis 2020) apportait à lui seul 6 vulnérabilités
-  // sans correctif disponible. Node >= 20 fournit tout ce qu'il faut.
-  // ---------------------------------------------------------------------------
 
   storeCookies (response) {
     const raw = typeof response.headers.getSetCookie === 'function'
       ? response.headers.getSetCookie()
       : []
-
     for (const line of raw) {
       const pair = line.split(';')[0]
       const sep = pair.indexOf('=')
@@ -224,81 +65,29 @@ class RIKAFirenetAccessory {
     return Array.from(this.cookies, ([name, value]) => `${name}=${value}`).join('; ')
   }
 
-  async httpRequest (url, options = {}) {
+  async request (url, options = {}) {
     const headers = Object.assign({}, options.headers)
     const cookie = this.cookieHeader()
     if (cookie) {
       headers.Cookie = cookie
     }
-
     const response = await fetch(url, Object.assign({}, options, {
       headers,
       signal: AbortSignal.timeout(this.timeout)
     }))
-
     // Y compris sur une redirection : c'est là que FireNet pose la session.
     this.storeCookies(response)
     return response
   }
 
-  async getJson (path) {
-    const response = await this.httpRequest(`${BASE_URL}${path}`)
-    let body = null
-    if (response.status === 200) {
-      try {
-        body = await response.json()
-      } catch (parseError) {
-        this.log('Erreur lors du traitement des données:', parseError.message)
-      }
-    }
-    return { status: response.status, body }
-  }
-
-  // ---------------------------------------------------------------------------
-
-  startPeriodicUpdates () {
-    if (this.updateTimer) {
-      clearInterval(this.updateTimer)
-    }
-
-    this.updateTimer = setInterval(() => {
-      this.log.debug('Mise à jour périodique...')
-      this.updateStatus()
-    }, this.updateInterval)
-  }
-
-  setTargetHeatingCoolingState (value, callback) {
-    this.log(`Changement de mode: ${value === 0 ? 'OFF' : value === 1 ? 'HEAT' : 'AUTO'}`)
-    this.TargetHeatingCoolingState = value
-
-    // Si on met sur OFF, éteindre le poêle
-    if (value === 0) {
-      this.updateCharacteristic('onOff', false, callback)
-    } else {
-      // Si on met sur HEAT ou AUTO, allumer le poêle
-      this.updateCharacteristic('onOff', true, callback)
-    }
-  }
-
-  setTargetTemperature (value, callback) {
-    this.log(`Température cible mode confort: ${value}°C`)
-    this.TargetTemperature = value
-    this.updateCharacteristic('targetTemperature', value, callback)
-  }
-
-  loginToFirenet (onSuccess) {
+  login (onSuccess) {
     this.log('Connexion à Firenet...')
-
-    const loginData = new URLSearchParams({
-      email: this.config.FirenetEmail,
-      password: this.config.FirenetPassword
-    })
 
     // `redirect: 'manual'` est indispensable : fetch n'expose pas les en-têtes
     // des réponses intermédiaires, or la session arrive sur la redirection 302.
-    this.httpRequest(LOGIN_URL, {
+    this.request(LOGIN_URL, {
       method: 'POST',
-      body: loginData,
+      body: new URLSearchParams({ email: this.email, password: this.password }),
       redirect: 'manual'
     }).then(async (response) => {
       const location = response.headers.get('location') || ''
@@ -306,9 +95,7 @@ class RIKAFirenetAccessory {
 
       let success = redirected && location.includes('summary')
       if (!success && response.status === 200) {
-        // Certaines réponses renvoient directement la page de résumé.
-        const body = await response.text()
-        success = body.includes('summary')
+        success = (await response.text()).includes('summary')
       }
 
       if (success) {
@@ -324,12 +111,324 @@ class RIKAFirenetAccessory {
     }).catch((error) => {
       this.log('Erreur de connexion:', error.message)
       this.connected = false
-      // Réessayer après 30 secondes
-      setTimeout(() => this.loginToFirenet(onSuccess), RELOGIN_DELAY)
+      setTimeout(() => this.login(onSuccess), RELOGIN_DELAY)
     })
   }
 
-  // Une seule requête en vol : les appelants simultanés partagent la même.
+  async getStatus () {
+    const response = await this.request(`${BASE_URL}/api/client/${this.stoveID}/status`)
+    let body = null
+    if (response.status === 200) {
+      try {
+        body = await response.json()
+      } catch (parseError) {
+        this.log('Erreur lors du traitement des données:', parseError.message)
+      }
+    }
+    return { status: response.status, body }
+  }
+
+  async sendControls (formData) {
+    return this.request(`${BASE_URL}/api/client/${this.stoveID}/controls`, {
+      method: 'POST',
+      body: new URLSearchParams(formData),
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Plateforme : publie un accessoire distinct par indicateur, afin qu'Apple
+// Home leur donne chacun une tuile. Regroupés sur un seul accessoire, les
+// services secondaires (Battery, FilterMaintenance, ContactSensor, Switch)
+// ne sont pas affichés par Apple Home.
+// ---------------------------------------------------------------------------
+
+class RIKAFirenetPlatform {
+  constructor (log, config, api) {
+    this.log = log
+    this.config = config || {}
+    this.api = api
+
+    if (!api) {
+      return
+    }
+    this.Service = api.hap.Service
+    this.Characteristic = api.hap.Characteristic
+
+    this.timeout = Number(this.config.timeout) || DEFAULT_TIMEOUT
+    this.updateInterval = Number(this.config.updateInterval) || DEFAULT_UPDATE_INTERVAL
+    this.name = this.config.name || 'Poele'
+
+    // --- Thermostat ---
+    this.CurrentHeatingCoolingState = 0
+    this.TargetHeatingCoolingState = 0
+    this.CurrentTemperature = 20
+    this.TargetTemperature = 20
+    this.currentControls = null
+    this.latestUpdateTimestamp = 0
+    this.updateInFlight = null
+
+    // --- Pellets ---
+    this.hopperCapacityKg = Number(this.config.hopperCapacityKg) || DEFAULT_HOPPER_CAPACITY_KG
+    this.lowPelletPercent = Number(this.config.lowPelletThresholdPercent) || DEFAULT_LOW_PELLET_PERCENT
+    this.autoDetectRefill = this.config.autoDetectRefill !== false
+    this.refillWarningCode = Number.isFinite(Number(this.config.refillWarningCode))
+      ? Number(this.config.refillWarningCode)
+      : DEFAULT_REFILL_WARNING_CODE
+    this.pelletState = { feedRateTotalAtRefill: null, lastRefillAt: null }
+    this.lastFeedRateTotal = null
+    this.previousWarning = null
+    this.pelletsRemainingKg = this.hopperCapacityKg
+    this.pelletLevelPercent = 100
+
+    // --- Santé ---
+    this.serviceAlertKg = Number(this.config.serviceAlertKg) || DEFAULT_SERVICE_ALERT_KG
+    this.healthSensors = this.config.healthSensors !== false
+    this.serviceCountdownKg = null
+    this.serviceLifePercent = 100
+    this.serviceDue = false
+    this.faultActive = false
+    this.faultDetail = ''
+
+    this.cached = new Map()
+    this.services = {}
+
+    this.loadPelletState()
+
+    this.client = new FirenetClient(log, {
+      email: this.config.FirenetEmail,
+      password: this.config.FirenetPassword,
+      stoveID: this.config.stoveID,
+      timeout: this.timeout
+    })
+
+    api.on('didFinishLaunching', () => this.start())
+  }
+
+  // Restauration des accessoires mis en cache par Homebridge.
+  configureAccessory (accessory) {
+    this.cached.set(accessory.UUID, accessory)
+  }
+
+  start () {
+    if (!this.config.stoveID || !this.config.FirenetEmail || !this.config.FirenetPassword) {
+      this.log('✗ Configuration incomplète : FirenetEmail, FirenetPassword et stoveID sont requis')
+      return
+    }
+    this.publishAccessories()
+    this.client.login(() => {
+      this.updateStatus()
+      this.startPeriodicUpdates()
+    })
+  }
+
+  // -------------------------------------------------------------------------
+  // Publication des accessoires
+  // -------------------------------------------------------------------------
+
+  uuidFor (role) {
+    return this.api.hap.uuid.generate(`${PLUGIN_NAME}:${this.config.stoveID}:${role}`)
+  }
+
+  buildAccessory (role, displayName, category, wanted) {
+    const uuid = this.uuidFor(role)
+    const existing = this.cached.get(uuid)
+
+    if (!wanted) {
+      return { uuid, accessory: existing, unwanted: true }
+    }
+
+    if (existing) {
+      existing.displayName = displayName
+      return { uuid, accessory: existing, isNew: false }
+    }
+
+    const accessory = new this.api.platformAccessory(displayName, uuid, category)
+    return { uuid, accessory, isNew: true }
+  }
+
+  describe (accessory, model, role) {
+    const info = accessory.getService(this.Service.AccessoryInformation)
+    if (info) {
+      info.setCharacteristic(this.Characteristic.Manufacturer, 'RIKA')
+          .setCharacteristic(this.Characteristic.Model, model)
+          .setCharacteristic(this.Characteristic.SerialNumber, `${this.config.stoveID}-${role}`)
+    }
+  }
+
+  // Récupère un service existant ou le crée, sans dupliquer au redémarrage.
+  serviceOn (accessory, type, displayName) {
+    return accessory.getService(type) || accessory.addService(type, displayName)
+  }
+
+  publishAccessories () {
+    const C = this.Characteristic
+    const Cat = this.api.hap.Categories
+    const created = []
+    const removed = []
+
+    // --- 1. Thermostat -----------------------------------------------------
+    const thermostat = this.buildAccessory('thermostat', this.name, Cat.THERMOSTAT, true)
+    this.describe(thermostat.accessory, 'Firenet', 'thermostat')
+    const t = this.serviceOn(thermostat.accessory, this.Service.Thermostat, this.name)
+
+    t.getCharacteristic(C.CurrentHeatingCoolingState)
+        .onGet(() => this.readCharacteristic('CurrentHeatingCoolingState'))
+        .setProps({ maxValue: 2, minValue: 0, validValues: [0, 1, 2] })
+    t.getCharacteristic(C.TargetHeatingCoolingState)
+        .onGet(() => this.readCharacteristic('TargetHeatingCoolingState'))
+        .onSet((value) => this.setTargetHeatingCoolingState(value))
+        .setProps({ maxValue: 1, minValue: 0, validValues: [0, 1] })
+    t.getCharacteristic(C.CurrentTemperature)
+        .onGet(() => this.readCharacteristic('CurrentTemperature'))
+        .setProps({ minValue: -50, maxValue: 100, minStep: 0.1 })
+    t.getCharacteristic(C.TargetTemperature)
+        .onGet(() => this.readCharacteristic('TargetTemperature'))
+        .onSet((value) => this.setTargetTemperature(value))
+        .setProps({ minValue: 14, maxValue: 28, minStep: 1 })
+    t.getCharacteristic(C.TemperatureDisplayUnits)
+        .onGet(() => C.TemperatureDisplayUnits.CELSIUS)
+    t.getCharacteristic(C.StatusFault)
+        .onGet(() => this.faultActive ? C.StatusFault.GENERAL_FAULT : C.StatusFault.NO_FAULT)
+    this.services.thermostat = t
+    ;(thermostat.isNew ? created : []).push(thermostat.accessory)
+
+    // --- 2. Niveau de pellets ---------------------------------------------
+    // Apple Home n'affiche aucune tuile pour un service Battery seul. Un
+    // capteur d'humidité est le seul type qui présente un pourcentage dans
+    // une tuile : le libellé est trompeur, la lisibilité y gagne. Le service
+    // Battery est conservé à côté pour l'alerte de niveau bas.
+    const pellets = this.buildAccessory('pellets', `${this.name} pellets`, Cat.SENSOR, true)
+    this.describe(pellets.accessory, 'Niveau de pellets', 'pellets')
+    const level = this.serviceOn(pellets.accessory, this.Service.HumiditySensor, `${this.name} pellets`)
+    level.getCharacteristic(C.CurrentRelativeHumidity)
+        .onGet(() => this.pelletLevelPercent)
+    level.getCharacteristic(C.StatusLowBattery)
+        .onGet(() => this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0)
+    const battery = this.serviceOn(pellets.accessory, this.Service.Battery, `${this.name} pellets`)
+    battery.getCharacteristic(C.BatteryLevel).onGet(() => this.pelletLevelPercent)
+    battery.getCharacteristic(C.StatusLowBattery)
+        .onGet(() => this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0)
+    battery.setCharacteristic(C.ChargingState, C.ChargingState.NOT_CHARGEABLE)
+    this.services.pelletLevel = level
+    this.services.pelletBattery = battery
+    ;(pellets.isNew ? created : []).push(pellets.accessory)
+
+    // --- 3. Interrupteur de plein ------------------------------------------
+    const refill = this.buildAccessory('refill', `${this.name} plein`, Cat.SWITCH,
+      this.config.refillSwitch !== false)
+    if (refill.unwanted) {
+      if (refill.accessory) removed.push(refill.accessory)
+    } else {
+      this.describe(refill.accessory, 'Plein de pellets', 'refill')
+      const sw = this.serviceOn(refill.accessory, this.Service.Switch, `${this.name} plein`)
+      sw.getCharacteristic(C.On)
+          .onGet(() => false)
+          .onSet((value) => {
+            if (value) {
+              this.manualRefill().catch((error) => this.log('Erreur lors du plein:', error.message))
+              // Interrupteur sans état : il retombe de lui-même.
+              setTimeout(() => sw.updateCharacteristic
+                ? sw.updateCharacteristic(C.On, false)
+                : sw.getCharacteristic(C.On).updateValue(false), REFILL_SWITCH_RESET_DELAY)
+            }
+          })
+      this.services.refill = sw
+      ;(refill.isNew ? created : []).push(refill.accessory)
+    }
+
+    // --- 4. Entretien ------------------------------------------------------
+    const service = this.buildAccessory('service', `${this.name} entretien`, Cat.SENSOR,
+      this.healthSensors)
+    if (service.unwanted) {
+      if (service.accessory) removed.push(service.accessory)
+    } else {
+      this.describe(service.accessory, 'Entretien', 'service')
+      // Un contact est le type le plus exploitable en automatisation :
+      // ouvert = entretien à faire.
+      const due = this.serviceOn(service.accessory, this.Service.ContactSensor, `${this.name} entretien`)
+      due.getCharacteristic(C.ContactSensorState)
+          .onGet(() => this.serviceDue
+            ? C.ContactSensorState.CONTACT_NOT_DETECTED
+            : C.ContactSensorState.CONTACT_DETECTED)
+      const filter = this.serviceOn(service.accessory, this.Service.FilterMaintenance, `${this.name} entretien`)
+      filter.getCharacteristic(C.FilterChangeIndication)
+          .onGet(() => this.serviceDue
+            ? C.FilterChangeIndication.CHANGE_FILTER
+            : C.FilterChangeIndication.FILTER_OK)
+      filter.getCharacteristic(C.FilterLifeLevel).onGet(() => this.serviceLifePercent)
+      this.services.serviceDue = due
+      this.services.serviceFilter = filter
+      ;(service.isNew ? created : []).push(service.accessory)
+    }
+
+    // --- 5. Défaut ---------------------------------------------------------
+    const fault = this.buildAccessory('fault', `${this.name} défaut`, Cat.SENSOR,
+      this.healthSensors)
+    if (fault.unwanted) {
+      if (fault.accessory) removed.push(fault.accessory)
+    } else {
+      this.describe(fault.accessory, 'Défaut', 'fault')
+      const contact = this.serviceOn(fault.accessory, this.Service.ContactSensor, `${this.name} défaut`)
+      contact.getCharacteristic(C.ContactSensorState)
+          .onGet(() => this.faultActive
+            ? C.ContactSensorState.CONTACT_NOT_DETECTED
+            : C.ContactSensorState.CONTACT_DETECTED)
+      this.services.fault = contact
+      ;(fault.isNew ? created : []).push(fault.accessory)
+    }
+
+    if (created.length) {
+      this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, created)
+      this.log(`${created.length} accessoire(s) ajouté(s) : ${created.map((a) => a.displayName).join(', ')}`)
+    }
+    if (removed.length) {
+      this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, removed)
+      this.log(`${removed.length} accessoire(s) retiré(s) : ${removed.map((a) => a.displayName).join(', ')}`)
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Lecture et commandes
+  // -------------------------------------------------------------------------
+
+  async readCharacteristic (characteristic) {
+    const cacheAge = Date.now() - this.latestUpdateTimestamp
+    if (cacheAge > 5000) {
+      // On répond toujours, même en cas d'échec : servir la dernière valeur
+      // connue vaut mieux que laisser HomeKit afficher « Pas de réponse ».
+      await this.updateStatus().catch(() => {})
+    }
+    return this[characteristic]
+  }
+
+  startPeriodicUpdates () {
+    if (this.updateTimer) {
+      clearInterval(this.updateTimer)
+    }
+    this.updateTimer = setInterval(() => {
+      this.log.debug('Mise à jour périodique...')
+      this.updateStatus()
+    }, this.updateInterval)
+  }
+
+  async setTargetHeatingCoolingState (value) {
+    this.log(`Changement de mode: ${value === 0 ? 'OFF' : 'HEAT'}`)
+    this.TargetHeatingCoolingState = value
+    await this.updateCharacteristic('onOff', value !== 0)
+  }
+
+  async setTargetTemperature (value) {
+    this.log(`Température cible mode confort: ${value}°C`)
+    this.TargetTemperature = value
+    await this.updateCharacteristic('targetTemperature', value)
+  }
+
+  // Une seule requête en vol : les appelants simultanés la partagent.
   updateStatus () {
     if (!this.updateInFlight) {
       this.updateInFlight = this.fetchStatus().finally(() => {
@@ -344,7 +443,7 @@ class RIKAFirenetAccessory {
 
     let result
     try {
-      result = await this.getJson(`/api/client/${this.config.stoveID}/status`)
+      result = await this.client.getStatus()
     } catch (error) {
       this.log('Erreur lors de la récupération du statut:', error.message)
       return
@@ -352,68 +451,116 @@ class RIKAFirenetAccessory {
 
     const { status, body } = result
 
-    if (status === 200 && body && body.stoveID === this.config.stoveID) {
-      try {
-        // Sauvegarde des contrôles complets pour les futures mises à jour
-        this.currentControls = body.controls
-
-        // Mise à jour des températures
-        this.TargetTemperature = body.controls.targetTemperature
-        this.CurrentTemperature = body.sensors.inputRoomTemperature
-        this.revision = body.controls.revision
-
-        // Détermination de l'état du chauffage
-        const mainState = body.sensors.statusMainState
-        const subState = body.sensors.statusSubState
-        const isOn = body.controls.onOff === true
-
-        this.log.debug(`États: mainState=${mainState}, subState=${subState}, onOff=${isOn}`)
-
-        // Définir CurrentHeatingCoolingState (ce que fait le poêle actuellement)
-        if (!isOn || (mainState === 0 && subState === 1)) {
-          this.CurrentHeatingCoolingState = 0 // OFF
-        } else if (mainState >= 2 && mainState <= 5) {
-          this.CurrentHeatingCoolingState = 1 // HEATING
-        } else {
-          this.CurrentHeatingCoolingState = 1 // IDLE mais allumé = HEATING
-        }
-
-        // Définir TargetHeatingCoolingState (ce que veut l'utilisateur)
-        this.TargetHeatingCoolingState = isOn ? 1 : 0 // HEAT ou OFF
-
-        this.latestUpdateTimestamp = Date.now()
-        this.log.debug(`✓ Statut mis à jour - Temp: ${this.CurrentTemperature}°C / Cible: ${this.TargetTemperature}°C / État: ${isOn ? 'ON' : 'OFF'}`)
-
-        // Niveau de pellets déduit du compteur cumulatif
-        this.updatePelletLevel(body.sensors)
-
-        // Entretien et défauts
-        this.updateHealth(body.sensors)
-
-        // Mise à jour des valeurs dans HomeKit
-        this.service.getCharacteristic(Characteristic.CurrentHeatingCoolingState).updateValue(this.CurrentHeatingCoolingState)
-        this.service.getCharacteristic(Characteristic.TargetHeatingCoolingState).updateValue(this.TargetHeatingCoolingState)
-        this.service.getCharacteristic(Characteristic.CurrentTemperature).updateValue(this.CurrentTemperature)
-        this.service.getCharacteristic(Characteristic.TargetTemperature).updateValue(this.TargetTemperature)
-      } catch (parseError) {
-        this.log('Erreur lors du traitement des données:', parseError.message)
-      }
-    } else if (status === 401) {
+    if (status === 401) {
       this.log('Session expirée, reconnexion...')
-      this.loginToFirenet(() => this.updateStatus())
-    } else if (status === 500) {
+      this.client.login(() => this.updateStatus())
+      return
+    }
+    if (status === 500) {
       this.log('Erreur serveur Firenet - Le poêle est-il lié à ce compte?')
-    } else {
+      return
+    }
+    if (status !== 200 || !body || body.stoveID !== this.config.stoveID) {
       this.log(`Erreur inattendue: ${status}`)
+      return
+    }
+
+    try {
+      this.currentControls = body.controls
+      this.TargetTemperature = body.controls.targetTemperature
+      this.CurrentTemperature = body.sensors.inputRoomTemperature
+      this.revision = body.controls.revision
+
+      const mainState = body.sensors.statusMainState
+      const subState = body.sensors.statusSubState
+      const isOn = body.controls.onOff === true
+
+      this.log.debug(`États: mainState=${mainState}, subState=${subState}, onOff=${isOn}`)
+
+      if (!isOn || (mainState === 0 && subState === 1)) {
+        this.CurrentHeatingCoolingState = 0 // OFF
+      } else {
+        this.CurrentHeatingCoolingState = 1 // HEATING
+      }
+      this.TargetHeatingCoolingState = isOn ? 1 : 0
+
+      this.latestUpdateTimestamp = Date.now()
+      this.log.debug(`✓ Statut mis à jour - Temp: ${this.CurrentTemperature}°C / Cible: ${this.TargetTemperature}°C / État: ${isOn ? 'ON' : 'OFF'}`)
+
+      this.updatePelletLevel(body.sensors)
+      this.updateHealth(body.sensors)
+      this.publishThermostat()
+    } catch (parseError) {
+      this.log('Erreur lors du traitement des données:', parseError.message)
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Santé du poêle : entretien à échéance et défaut actif
-  // ---------------------------------------------------------------------------
+  publishThermostat () {
+    const C = this.Characteristic
+    const t = this.services.thermostat
+    if (!t) return
+    t.getCharacteristic(C.CurrentHeatingCoolingState).updateValue(this.CurrentHeatingCoolingState)
+    t.getCharacteristic(C.TargetHeatingCoolingState).updateValue(this.TargetHeatingCoolingState)
+    t.getCharacteristic(C.CurrentTemperature).updateValue(this.CurrentTemperature)
+    t.getCharacteristic(C.TargetTemperature).updateValue(this.TargetTemperature)
+  }
+
+  async updateCharacteristic (controlItem, value) {
+    this.log(`Envoi de la mise à jour: ${controlItem} = ${value}`)
+
+    const { status, body } = await this.client.getStatus()
+
+    if (status === 401) {
+      this.log('Session expirée, reconnexion...')
+      this.client.login(() => this.updateCharacteristic(controlItem, value))
+      return
+    }
+    if (status !== 200 || !body || body.stoveID !== this.config.stoveID) {
+      this.log(`Erreur inattendue: ${status}`)
+      throw new Error(`Unexpected response ${status}`)
+    }
+
+    const controls = body.controls
+    controls[controlItem] = value
+
+    const formData = {
+      operatingMode: controls.operatingMode,
+      heatingPower: controls.heatingPower,
+      targetTemperature: controls.targetTemperature,
+      bakeTemperature: controls.bakeTemperature,
+      onOff: controls.onOff,
+      heatingTimesActiveForComfort: controls.heatingTimesActiveForComfort,
+      setBackTemperature: controls.setBackTemperature,
+      convectionFan1Active: controls.convectionFan1Active,
+      convectionFan1Level: controls.convectionFan1Level,
+      convectionFan1Area: controls.convectionFan1Area,
+      convectionFan2Active: controls.convectionFan2Active,
+      convectionFan2Level: controls.convectionFan2Level,
+      convectionFan2Area: controls.convectionFan2Area,
+      frostProtectionActive: controls.frostProtectionActive,
+      frostProtectionTemperature: controls.frostProtectionTemperature,
+      revision: controls.revision
+    }
+
+    this.log.debug(`Données envoyées: ${JSON.stringify(formData)}`)
+    const response = await this.client.sendControls(formData)
+
+    if (response.status === 200) {
+      this.log(`✓ ${controlItem} défini sur: ${value}`)
+      setTimeout(() => this.updateStatus(), CONFIRM_DELAY)
+      return
+    }
+
+    const text = await response.text().catch(() => '')
+    this.log(`✗ Échec de la mise à jour de ${controlItem}: ${response.status} - ${text}`)
+    throw new Error(`Failed to update ${controlItem}`)
+  }
+
+  // -------------------------------------------------------------------------
+  // Santé du poêle
+  // -------------------------------------------------------------------------
 
   updateHealth (sensors) {
-    // --- Entretien : le poêle décompte lui-même les kg restants ---
     const countdown = Number(sensors.parameterServiceCountdownKg)
     const interval = Number(sensors.parameterKgTillCleaning)
     if (Number.isFinite(countdown) && Number.isFinite(interval) && interval > 0) {
@@ -431,7 +578,6 @@ class RIKAFirenetAccessory {
       }
     }
 
-    // --- Défaut actif : erreur, sous-erreur ou avertissement non nul ---
     const error = Number(sensors.statusError) || 0
     const subError = Number(sensors.statusSubError) || 0
     const warning = Number(sensors.statusWarning) || 0
@@ -449,31 +595,30 @@ class RIKAFirenetAccessory {
   }
 
   publishHealth () {
-    if (this.serviceService) {
-      this.serviceService.getCharacteristic(Characteristic.FilterChangeIndication)
-          .updateValue(this.serviceDue
-            ? Characteristic.FilterChangeIndication.CHANGE_FILTER
-            : Characteristic.FilterChangeIndication.FILTER_OK)
-      this.serviceService.getCharacteristic(Characteristic.FilterLifeLevel)
+    const C = this.Characteristic
+    if (this.services.serviceFilter) {
+      this.services.serviceFilter.getCharacteristic(C.FilterChangeIndication)
+          .updateValue(this.serviceDue ? C.FilterChangeIndication.CHANGE_FILTER : C.FilterChangeIndication.FILTER_OK)
+      this.services.serviceFilter.getCharacteristic(C.FilterLifeLevel)
           .updateValue(this.serviceLifePercent)
     }
-    if (this.faultService) {
-      this.faultService.getCharacteristic(Characteristic.ContactSensorState)
-          .updateValue(this.faultActive
-            ? Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
-            : Characteristic.ContactSensorState.CONTACT_DETECTED)
+    if (this.services.serviceDue) {
+      this.services.serviceDue.getCharacteristic(C.ContactSensorState)
+          .updateValue(this.serviceDue ? C.ContactSensorState.CONTACT_NOT_DETECTED : C.ContactSensorState.CONTACT_DETECTED)
     }
-    if (this.service) {
-      this.service.getCharacteristic(Characteristic.StatusFault)
-          .updateValue(this.faultActive
-            ? Characteristic.StatusFault.GENERAL_FAULT
-            : Characteristic.StatusFault.NO_FAULT)
+    if (this.services.fault) {
+      this.services.fault.getCharacteristic(C.ContactSensorState)
+          .updateValue(this.faultActive ? C.ContactSensorState.CONTACT_NOT_DETECTED : C.ContactSensorState.CONTACT_DETECTED)
+    }
+    if (this.services.thermostat) {
+      this.services.thermostat.getCharacteristic(C.StatusFault)
+          .updateValue(this.faultActive ? C.StatusFault.GENERAL_FAULT : C.StatusFault.NO_FAULT)
     }
   }
 
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
   // Niveau de pellets
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
 
   get pelletStatePath () {
     const dir = (this.api && this.api.user && typeof this.api.user.storagePath === 'function')
@@ -484,8 +629,7 @@ class RIKAFirenetAccessory {
 
   loadPelletState () {
     try {
-      const raw = fs.readFileSync(this.pelletStatePath, 'utf8')
-      const saved = JSON.parse(raw)
+      const saved = JSON.parse(fs.readFileSync(this.pelletStatePath, 'utf8'))
       if (Number.isFinite(saved.feedRateTotalAtRefill)) {
         this.pelletState = {
           feedRateTotalAtRefill: saved.feedRateTotalAtRefill,
@@ -495,7 +639,7 @@ class RIKAFirenetAccessory {
       }
     } catch (error) {
       if (error.code !== 'ENOENT') {
-        this.log('Impossible de relire l\'état des pellets:', error.message)
+        this.log("Impossible de relire l'état des pellets:", error.message)
       }
     }
   }
@@ -509,7 +653,7 @@ class RIKAFirenetAccessory {
         lastRefillAt: this.pelletState.lastRefillAt
       }, null, 2), { mode: 0o600 })
     } catch (error) {
-      this.log('Impossible d\'enregistrer l\'état des pellets:', error.message)
+      this.log("Impossible d'enregistrer l'état des pellets:", error.message)
     }
   }
 
@@ -524,7 +668,6 @@ class RIKAFirenetAccessory {
     this.publishPelletLevel()
   }
 
-  // Appelé par l'interrupteur « plein » dans HomeKit.
   async manualRefill () {
     if (this.lastFeedRateTotal === null) {
       await this.updateStatus()
@@ -544,8 +687,9 @@ class RIKAFirenetAccessory {
     }
     this.lastFeedRateTotal = total
 
-    // Détection d'un plein : le poêle signale le couvercle ouvert par un code
-    // d'avertissement. Sa disparition signe la fermeture, donc la fin du plein.
+    // Le poêle signale le couvercle ouvert par un code d'avertissement ; sa
+    // disparition signe la fermeture, donc la fin du plein. Aucun contact de
+    // la charge utile FireNet ne bouge à l'ouverture.
     const warning = Number(sensors.statusWarning) || 0
     const wasOpen = this.previousWarning === this.refillWarningCode
     this.previousWarning = warning
@@ -557,8 +701,6 @@ class RIKAFirenetAccessory {
     }
 
     if (this.pelletState.feedRateTotalAtRefill === null) {
-      // Première exécution : on ancre sur la valeur courante en supposant le
-      // réservoir plein. À corriger avec l'interrupteur « plein » si besoin.
       this.log(`Premier relevé du compteur de pellets (${total} kg) — réservoir supposé plein (${this.hopperCapacityKg} kg)`)
       this.registerRefill(total)
       return
@@ -566,7 +708,6 @@ class RIKAFirenetAccessory {
 
     let consumed = total - this.pelletState.feedRateTotalAtRefill
     if (consumed < 0) {
-      // Le compteur du poêle a été remis à zéro (entretien) : on réancre.
       this.log(`Compteur de pellets reparti en arrière (${total} kg < ${this.pelletState.feedRateTotalAtRefill} kg) — réancrage`)
       this.registerRefill(total)
       return
@@ -588,116 +729,20 @@ class RIKAFirenetAccessory {
   }
 
   publishPelletLevel () {
-    if (!this.batteryService) {
-      return
+    const C = this.Characteristic
+    const low = this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0
+    if (this.services.pelletLevel) {
+      this.services.pelletLevel.getCharacteristic(C.CurrentRelativeHumidity)
+          .updateValue(this.pelletLevelPercent)
+      this.services.pelletLevel.getCharacteristic(C.StatusLowBattery).updateValue(low)
     }
-    this.batteryService.getCharacteristic(Characteristic.BatteryLevel)
-        .updateValue(this.pelletLevelPercent)
-    this.batteryService.getCharacteristic(Characteristic.StatusLowBattery)
-        .updateValue(this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0)
-  }
-
-  getCharacteristic (characteristic, callback) {
-    const cacheAge = Date.now() - this.latestUpdateTimestamp
-
-    if (cacheAge <= CACHE_TTL) {
-      this.log.debug(`→ Récupération depuis le cache: ${characteristic} = ${this[characteristic]}`)
-      callback(null, this[characteristic])
-      return
-    }
-
-    this.log.debug(`→ Récupération depuis le serveur: ${characteristic}`)
-    // On répond toujours, même en cas d'échec : servir la dernière valeur connue
-    // vaut mieux que laisser HomeKit afficher « Pas de réponse ».
-    this.updateStatus().finally(() => {
-      callback(null, this[characteristic])
-    })
-  }
-
-  async updateCharacteristic (controlItem, value, callback) {
-    this.log(`Envoi de la mise à jour: ${controlItem} = ${value}`)
-
-    let result
-    try {
-      // D'abord récupérer le statut actuel pour avoir tous les paramètres
-      result = await this.getJson(`/api/client/${this.config.stoveID}/status`)
-    } catch (error) {
-      this.log('Erreur lors de la récupération du statut:', error.message)
-      callback(error)
-      return
-    }
-
-    const { status, body } = result
-
-    if (status === 401) {
-      this.log('Session expirée, reconnexion...')
-      this.loginToFirenet(() => this.updateCharacteristic(controlItem, value, callback))
-      return
-    }
-
-    if (status === 500) {
-      this.log('Erreur serveur Firenet')
-      callback(new Error('Firenet server error'))
-      return
-    }
-
-    if (status !== 200 || !body || body.stoveID !== this.config.stoveID) {
-      this.log(`Erreur inattendue: ${status}`)
-      callback(new Error(`Unexpected response ${status}`))
-      return
-    }
-
-    try {
-      // Préparer les données à envoyer avec TOUS les paramètres
-      const controls = body.controls
-
-      // Modifier uniquement le paramètre souhaité
-      controls[controlItem] = value
-
-      // Préparer les données au format application/x-www-form-urlencoded
-      const formData = {
-        operatingMode: controls.operatingMode,
-        heatingPower: controls.heatingPower,
-        targetTemperature: controls.targetTemperature,
-        bakeTemperature: controls.bakeTemperature,
-        onOff: controls.onOff,
-        heatingTimesActiveForComfort: controls.heatingTimesActiveForComfort,
-        setBackTemperature: controls.setBackTemperature,
-        convectionFan1Active: controls.convectionFan1Active,
-        convectionFan1Level: controls.convectionFan1Level,
-        convectionFan1Area: controls.convectionFan1Area,
-        convectionFan2Active: controls.convectionFan2Active,
-        convectionFan2Level: controls.convectionFan2Level,
-        convectionFan2Area: controls.convectionFan2Area,
-        frostProtectionActive: controls.frostProtectionActive,
-        frostProtectionTemperature: controls.frostProtectionTemperature,
-        revision: controls.revision
-      }
-
-      this.log.debug(`Données envoyées: ${JSON.stringify(formData)}`)
-
-      const response = await this.httpRequest(`${BASE_URL}/api/client/${this.config.stoveID}/controls`, {
-        method: 'POST',
-        body: new URLSearchParams(formData),
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          'X-Requested-With': 'XMLHttpRequest'
-        }
-      })
-
-      if (response.status === 200) {
-        this.log(`✓ ${controlItem} défini sur: ${value}`)
-        // Forcer une mise à jour après 2 secondes pour vérifier le changement
-        setTimeout(() => this.updateStatus(), CONFIRM_DELAY)
-        callback(null)
-      } else {
-        const text = await response.text().catch(() => '')
-        this.log(`✗ Échec de la mise à jour de ${controlItem}: ${response.status} - ${text}`)
-        callback(new Error(`Failed to update ${controlItem}`))
-      }
-    } catch (error) {
-      this.log("Erreur lors de l'envoi de la commande:", error.message)
-      callback(error)
+    if (this.services.pelletBattery) {
+      this.services.pelletBattery.getCharacteristic(C.BatteryLevel)
+          .updateValue(this.pelletLevelPercent)
+      this.services.pelletBattery.getCharacteristic(C.StatusLowBattery).updateValue(low)
     }
   }
 }
+
+module.exports.RIKAFirenetPlatform = RIKAFirenetPlatform
+module.exports.FirenetClient = FirenetClient
