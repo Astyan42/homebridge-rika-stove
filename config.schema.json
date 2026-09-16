@@ -71,11 +71,11 @@
         "description": "En dessous de ce pourcentage, HomeKit signale un niveau bas — exploitable dans une automatisation."
       },
       "autoDetectRefill": {
-        "title": "Détecter les pleins automatiquement (expérimental)",
+        "title": "Détecter les pleins automatiquement (inopérant sur Sumo)",
         "type": "boolean",
         "default": false,
         "required": false,
-        "description": "Enregistre un plein quand le contact inputCover repasse de false à true. Vérifié sans succès sur un RIKA Sumo : le contact reste à true couvercle ouvert. N'activez cette option que si vous avez constaté que votre modèle remonte bien ce contact."
+        "description": "Enregistre un plein quand le contact inputCover repasse de false à true. Mesuré comme inopérant sur un RIKA Sumo : inputCover suit l'état d'alimentation du poêle et non l'ouverture d'un capot, et aucun autre contact ne réagit à une ouverture. N'activez cette option que si vous avez vérifié le comportement de votre modèle."
       },
       "refillSwitch": {
         "title": "Exposer l'interrupteur « plein effectué »",

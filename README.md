@@ -103,23 +103,34 @@ une automatisation pour être prévenu avant la panne sèche.
 **Le mécanisme fiable est l'interrupteur « plein »** exposé dans l'app Maison.
 Il retombe de lui-même après activation. Désactivable via `refillSwitch`.
 
-### Détection automatique (expérimental, désactivé par défaut)
+### Détection automatique (non réalisable sur ce modèle)
 
-Le plugin sait aussi enregistrer un plein quand le contact `inputCover`
-repasse de `false` à `true`. **Cette détection a été testée sans succès sur un
-RIKA Sumo** : couvercle physiquement ouvert, `inputCover` reste à `true`, sur
-six relevés en trente secondes avec `lastSeenMinutes: 0`. Les contacts
-`inputDoor`, `inputGridContact`, `inputBurnBackFlapSwitch`,
-`inputFlueGasFlapSwitch` et `inputPressureSwitch` ne bougent pas davantage.
+Le plugin sait enregistrer un plein quand le contact `inputCover` repasse de
+`false` à `true`. **Cette détection ne fonctionne pas sur un RIKA Sumo**, et
+`autoDetectRefill` est donc à `false` par défaut.
 
-Ces contacts ne semblent donc pas refléter l'état physique dans la charge utile
-du cloud, au moins poêle à l'arrêt. L'option `autoDetectRefill` est laissée
-en place, à `false` par défaut : ne l'activez que si vous avez vérifié que votre
-modèle remonte bien ce contact. Pour le vérifier, ouvrez le couvercle et
-laissez-le ouvert, puis comparez deux relevés de `/api/client/<stoveID>/status`.
+Mesures réalisées sur un Sumo, quatre situations, chacune sur plusieurs relevés
+avec `lastSeenMinutes: 0` :
 
-Une piste non explorée : ces contacts sont peut-être rafraîchis uniquement
-lorsque le poêle fonctionne.
+| Situation | `inputCover` | `inputDoor` |
+|---|---|---|
+| Poêle éteint, couvercle du réservoir ouvert | `true` | `true` |
+| Poêle éteint, tout fermé | `true` | `true` |
+| Poêle sous tension, porte du foyer ouverte | `false` | `true` |
+| Poêle sous tension, tout fermé | `false` | `true` |
+
+`inputCover` suit **l'état d'alimentation du poêle**, pas l'ouverture d'un
+capot : il vaut `true` poêle éteint et `false` poêle sous tension, quelle que
+soit l'ouverture. Aucun des autres contacts (`inputDoor`, `inputGridContact`,
+`inputBurnBackFlapSwitch`, `inputFlueGasFlapSwitch`, `inputPressureSwitch`)
+n'a varié dans aucune des quatre situations — `inputDoor` est resté à `true`
+même porte ouverte.
+
+Autrement dit, la charge utile FireNet de ce modèle ne remonte **aucun
+contact d'ouverture** exploitable. Le code de détection est conservé au cas où
+un autre modèle se comporterait différemment : pour le vérifier, relevez
+`/api/client/<stoveID>/status` dans les quatre situations ci-dessus avant
+d'activer l'option.
 
 ### Options
 
@@ -127,7 +138,7 @@ lorsque le poêle fonctionne.
 |---|---|---|
 | `hopperCapacityKg` | `40` | Capacité du réservoir plein, en kg |
 | `lowPelletThresholdPercent` | `20` | Seuil de l'alerte de niveau bas |
-| `autoDetectRefill` | `false` | Détection via le couvercle — expérimental, voir ci-dessus |
+| `autoDetectRefill` | `false` | Détection via le couvercle — inopérante sur Sumo, voir ci-dessus |
 | `refillSwitch` | `true` | Interrupteur manuel dans HomeKit |
 
 ### Limites à connaître
