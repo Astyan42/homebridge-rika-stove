@@ -117,11 +117,11 @@
         "description": "Publie en plus un accessoire capteur dédié au niveau de pellets. Il passe par un capteur d'humidité, seul type qu'Apple Home affiche en pourcentage : la tuile parlera donc d'humidité. Désactivé par défaut, le niveau étant déjà visible sur le poêle."
       },
       "flameSensor": {
-        "title": "Capteur de température de flamme",
+        "title": "Accessoire séparé pour la température de flamme",
         "type": "boolean",
-        "default": true,
+        "default": false,
         "required": false,
-        "description": "Publie un accessoire capteur distinct affichant la température de flamme du poêle sur sa propre vignette."
+        "description": "Publie en plus un accessoire capteur distinct, avec sa propre vignette. Désactivé par défaut, la température étant déjà dans la fiche du poêle."
       },
       "serviceGauge": {
         "title": "Jauge de durée avant entretien",
@@ -143,6 +143,20 @@
         "default": "Entretien",
         "required": false,
         "description": "Étiquette du second bloc dans la fiche du poêle."
+      },
+      "flameInCard": {
+        "title": "Température de flamme dans la fiche du poêle",
+        "type": "boolean",
+        "default": true,
+        "required": false,
+        "description": "Ajoute un service de température dans la fiche du poêle, sous les blocs de jauges, affichant la température de flamme."
+      },
+      "flameServiceName": {
+        "title": "Nom du bloc « température de flamme »",
+        "type": "string",
+        "default": "Flamme",
+        "required": false,
+        "description": "Étiquette du bloc dans la fiche du poêle."
       }
     }
   }

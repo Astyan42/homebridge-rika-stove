@@ -32,7 +32,7 @@ const DEFAULT_REFILL_WARNING_CODE = 2
 // caractéristiques, de bornes ou de permissions : Homebridge restaure les
 // accessoires depuis son cache, et un setProps sur un service restauré n'est
 // pas repris. Le service est alors reconstruit une fois, proprement.
-const SERVICE_SHAPE = 7
+const SERVICE_SHAPE = 8
 
 module.exports = (api) => {
   api.registerPlatform(PLATFORM_NAME, RIKAFirenetPlatform)
@@ -199,7 +199,8 @@ class RIKAFirenetPlatform {
     this.serviceCountdownKg = null
     this.serviceLifePercent = 100
     this.serviceDue = false
-    this.flameSensor = this.config.flameSensor !== false
+    this.flameSensor = this.config.flameSensor === true
+    this.flameInCard = this.config.flameInCard !== false
     this.serviceGauge = this.config.serviceGauge !== false
     this.faultActive = false
     this.faultDetail = ''
@@ -399,6 +400,23 @@ class RIKAFirenetPlatform {
       const stale = heater.accessory.getServiceById(this.Service.Fanv2, 'servicegauge')
       if (stale) heater.accessory.removeService(stale)
       this.services.serviceGauge = null
+    }
+
+    // Température de flamme dans la fiche du poêle, ajoutée après les deux
+    // ventilateurs pour apparaître en dessous d'eux.
+    if (this.flameInCard) {
+      const flameSvc = this.serviceOn(heater.accessory, this.Service.TemperatureSensor,
+        `${this.name} flamme`, 'flame')
+      this.nameService(flameSvc, this.config.flameServiceName || 'Flamme')
+      // La flamme dépasse largement les 100 °C par défaut du type.
+      flameSvc.getCharacteristic(C.CurrentTemperature)
+          .setProps({ minValue: -50, maxValue: 1000, minStep: 1 })
+          .onGet(() => this.FlameTemperature)
+      this.services.flameInCard = flameSvc
+    } else {
+      const stale = heater.accessory.getServiceById(this.Service.TemperatureSensor, 'flame')
+      if (stale) heater.accessory.removeService(stale)
+      this.services.flameInCard = null
     }
 
     // Le service Battery double l'information et porte l'alerte de niveau bas.
@@ -660,8 +678,8 @@ class RIKAFirenetPlatform {
     h.getCharacteristic(C.CurrentHeaterCoolerState).updateValue(this.CurrentHeaterCoolerState)
     h.getCharacteristic(C.CurrentTemperature).updateValue(this.CurrentTemperature)
     h.getCharacteristic(C.HeatingThresholdTemperature).updateValue(this.TargetTemperature)
-    if (this.services.flame) {
-      this.services.flame.getCharacteristic(C.CurrentTemperature).updateValue(this.FlameTemperature)
+    for (const svc of [this.services.flame, this.services.flameInCard]) {
+      if (svc) svc.getCharacteristic(C.CurrentTemperature).updateValue(this.FlameTemperature)
     }
   }
 

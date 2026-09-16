@@ -180,7 +180,9 @@ affiche la valeur brute à chaque apparition, à rapprocher de la notice.
 | `lowPelletThresholdPercent` | `20` | Seuil de l'alerte de niveau bas |
 | `autoDetectRefill` | `true` | Détection des pleins via l'avertissement du poêle |
 | `pelletSensorAccessory` | `false` | Tuile autonome pour le niveau de pellets |
-| `flameSensor` | `true` | Accessoire capteur de température de flamme |
+| `flameInCard` | `true` | Température de flamme dans la fiche du poêle |
+| `flameServiceName` | `Flamme` | Étiquette de ce bloc |
+| `flameSensor` | `false` | Accessoire séparé pour la flamme, en plus |
 | `serviceGauge` | `true` | Second bloc : durée avant entretien |
 | `pelletGaugeName` | `Pellets` | Étiquette du bloc niveau de pellets |
 | `serviceGaugeName` | `Entretien` | Étiquette du bloc durée avant entretien |
@@ -251,8 +253,7 @@ s'appuyer sur ce champ — c'est `statusWarning` qui porte l'information.
 
 | Accessoire | Service | Ce qu'Apple Home montre |
 |---|---|---|
-| `Poele` | `HeaterCooler` + 2 × `Fanv2` + `Battery` | marche/arrêt, température, consigne, et **deux blocs** : niveau de pellets, durée avant entretien |
-| `Poele flamme` | `TemperatureSensor` | température de flamme, sur sa propre vignette |
+| `Poele` | `HeaterCooler` + 2 × `Fanv2` + `TemperatureSensor` + `Battery` | marche/arrêt, température, consigne, **deux blocs de jauges** et la **température de flamme** |
 | `Poele plein` | `Switch` | interrupteur d'enregistrement du plein |
 | `Poele entretien` | `ContactSensor` + `FilterMaintenance` | ouvert = entretien à faire |
 | `Poele défaut` | `ContactSensor` | ouvert = le poêle signale un défaut |
