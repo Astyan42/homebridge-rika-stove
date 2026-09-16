@@ -71,11 +71,11 @@
         "description": "En dessous de ce pourcentage, HomeKit signale un niveau bas — exploitable dans une automatisation."
       },
       "autoDetectRefill": {
-        "title": "Détecter les pleins automatiquement (inopérant sur Sumo)",
+        "title": "Détecter les pleins automatiquement",
         "type": "boolean",
-        "default": false,
+        "default": true,
         "required": false,
-        "description": "Enregistre un plein quand le contact inputCover repasse de false à true. Mesuré comme inopérant sur un RIKA Sumo : inputCover suit l'état d'alimentation du poêle et non l'ouverture d'un capot, et aucun autre contact ne réagit à une ouverture. N'activez cette option que si vous avez vérifié le comportement de votre modèle."
+        "description": "Enregistre un plein quand l'avertissement « couvercle ouvert » du poêle disparaît, c'est-à-dire à la fermeture du couvercle. Nécessite que le poêle soit sous tension : éteint, il ne remonte aucun avertissement."
       },
       "refillSwitch": {
         "title": "Exposer l'interrupteur « plein effectué »",
@@ -99,6 +99,15 @@
         "maximum": 500,
         "required": false,
         "description": "Le poêle décompte les kg de pellets avant son grand nettoyage. En dessous de ce seuil, HomeKit signale l'entretien comme dû — utilisable dans une automatisation."
+      },
+      "refillWarningCode": {
+        "title": "Code d'avertissement « couvercle ouvert »",
+        "type": "integer",
+        "default": 2,
+        "minimum": 1,
+        "maximum": 255,
+        "required": false,
+        "description": "Valeur de statusWarning signalant le couvercle du réservoir ouvert. Mesurée à 2 sur un RIKA Sumo. À ajuster si votre modèle utilise un autre code — le journal Homebridge affiche le code à chaque apparition."
       }
     }
   }

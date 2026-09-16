@@ -103,34 +103,38 @@ une automatisation pour être prévenu avant la panne sèche.
 **Le mécanisme fiable est l'interrupteur « plein »** exposé dans l'app Maison.
 Il retombe de lui-même après activation. Désactivable via `refillSwitch`.
 
-### Détection automatique (non réalisable sur ce modèle)
+### Détection automatique
 
-Le plugin sait enregistrer un plein quand le contact `inputCover` repasse de
-`false` à `true`. **Cette détection ne fonctionne pas sur un RIKA Sumo**, et
-`autoDetectRefill` est donc à `false` par défaut.
+Un plein est enregistré quand le poêle **cesse de signaler son couvercle
+ouvert**. Le poêle n'expose aucun contact d'ouverture exploitable, mais il lève
+un avertissement : `statusWarning` passe à `2` à l'ouverture du couvercle du
+réservoir, et revient à `0` à la fermeture. C'est cette transition `2 -> 0`
+qui déclenche l'enregistrement.
 
-Mesures réalisées sur un Sumo, quatre situations, chacune sur plusieurs relevés
-avec `lastSeenMinutes: 0` :
+Mesuré sur un RIKA Sumo, poêle sous tension, avec une surveillance continue :
 
-| Situation | `inputCover` | `inputDoor` |
-|---|---|---|
-| Poêle éteint, couvercle du réservoir ouvert | `true` | `true` |
-| Poêle éteint, tout fermé | `true` | `true` |
-| Poêle sous tension, porte du foyer ouverte | `false` | `true` |
-| Poêle sous tension, tout fermé | `false` | `true` |
+```
+23:33:10  ETAT INITIAL  Cover=true Door=true ... Warning=0
+23:35:45  CHANGEMENT    statusWarning: 0 -> 2      <- ouverture du couvercle
+```
 
-`inputCover` suit **l'état d'alimentation du poêle**, pas l'ouverture d'un
-capot : il vaut `true` poêle éteint et `false` poêle sous tension, quelle que
-soit l'ouverture. Aucun des autres contacts (`inputDoor`, `inputGridContact`,
+Aucun des contacts (`inputCover`, `inputDoor`, `inputGridContact`,
 `inputBurnBackFlapSwitch`, `inputFlueGasFlapSwitch`, `inputPressureSwitch`)
-n'a varié dans aucune des quatre situations — `inputDoor` est resté à `true`
-même porte ouverte.
+n'a bougé pendant cette ouverture : ils ne sont pas exploitables, seul le code
+d'avertissement l'est.
 
-Autrement dit, la charge utile FireNet de ce modèle ne remonte **aucun
-contact d'ouverture** exploitable. Le code de détection est conservé au cas où
-un autre modèle se comporterait différemment : pour le vérifier, relevez
-`/api/client/<stoveID>/status` dans les quatre situations ci-dessus avant
-d'activer l'option.
+**Deux limites à connaître :**
+
+- **Le poêle doit être sous tension.** Éteint, il ne remonte aucun
+  avertissement, donc un plein fait à froid n'est pas détecté. L'interrupteur
+  manuel reste là pour ces cas.
+- **Fenêtre de sondage de 60 secondes** (`updateInterval`) : une ouverture et
+  une fermeture toutes deux comprises entre deux relevés passent inaperçues.
+  Un remplissage réel prend plus longtemps, mais un simple coup d'œil rapide
+  peut échapper à la détection — ce qui est plutôt souhaitable ici.
+
+Seul le code configuré dans `refillWarningCode` déclenche la détection : un
+autre avertissement, ou une erreur, est ignoré.
 
 ### Options
 
@@ -138,7 +142,8 @@ d'activer l'option.
 |---|---|---|
 | `hopperCapacityKg` | `40` | Capacité du réservoir plein, en kg |
 | `lowPelletThresholdPercent` | `20` | Seuil de l'alerte de niveau bas |
-| `autoDetectRefill` | `false` | Détection via le couvercle — inopérante sur Sumo, voir ci-dessus |
+| `autoDetectRefill` | `true` | Détection des pleins via l'avertissement du poêle |
+| `refillWarningCode` | `2` | Code `statusWarning` du couvercle ouvert |
 | `refillSwitch` | `true` | Interrupteur manuel dans HomeKit |
 
 ### Limites à connaître
@@ -196,12 +201,10 @@ par RIKA. Le journal donne les valeurs brutes, à rapprocher de la notice.
 `parameterErrorCount0` à `19` (compteurs cumulés par type d'erreur),
 `statusWifiStrength`, `inputFlameTemperature`, `inputCurrentStage`.
 
-Le comportement de `inputCover` n'est pas élucidé sur ce modèle. Il a été
-observé à `true` poêle éteint (couvercle ouvert comme fermé), à `false` poêle
-sous tension, puis de nouveau à `true` poêle toujours sous tension — ce qui
-exclut une simple inversion de `controls.onOff`. Les relevés ponctuels ne
-suffisent pas à conclure ; il faudrait une surveillance en continu corrélée à
-des ouvertures horodatées. En l'état, ne pas s'appuyer sur ce champ.
+Le comportement de `inputCover` reste inexpliqué : observé à `true` poêle
+éteint, à `false` poêle sous tension, puis de nouveau à `true` sans changement
+d'état, et immobile pendant une ouverture confirmée du couvercle. Ne pas
+s'appuyer sur ce champ — c'est `statusWarning` qui porte l'information.
 
 ## Caractéristiques HomeKit exposées
 

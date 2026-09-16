@@ -54,8 +54,9 @@ function make (config = {}) {
   clearInterval(acc.updateTimer)
   return acc
 }
-const sensors = (total, coverClosed = true) => ({
-  parameterFeedRateTotal: total, inputCover: coverClosed
+// warning = code d'avertissement du poêle (2 = couvercle du réservoir ouvert)
+const sensors = (total, warning = 0) => ({
+  parameterFeedRateTotal: total, statusWarning: warning
 })
 const reset = () => fs.rmSync(`${tmp}/rika-pellets-TEST.json`, { force: true })
 
@@ -104,31 +105,59 @@ check('alerte au franchissement du seuil, une seule fois', () => {
   assert.equal(messages.filter(m => m.includes('bas')).length, 1, 'ne doit pas répéter')
 })
 
-console.log('\n=== DETECTION DU PLEIN PAR LE COUVERCLE ===')
-check('couvercle ouvert puis refermé -> plein (si autoDetectRefill activé)', () => {
-  const a = make({ hopperCapacityKg: 40, autoDetectRefill: true })
+console.log('\n=== DETECTION DU PLEIN PAR LE CODE D\'AVERTISSEMENT ===')
+check('avertissement 2 puis retour à 0 -> plein enregistré', () => {
+  reset()
+  const a = make({ hopperCapacityKg: 40 })
   a.updatePelletLevel(sensors(2072))
   a.updatePelletLevel(sensors(2100))
   assert.equal(a.pelletLevelPercent, 30)
-  a.updatePelletLevel(sensors(2100, false))   // couvercle ouvert
-  a.updatePelletLevel(sensors(2100, true))    // refermé
+  a.updatePelletLevel(sensors(2100, 2))   // couvercle ouvert
+  a.updatePelletLevel(sensors(2100, 0))   // refermé
   assert.equal(a.pelletLevelPercent, 100)
   assert.equal(a.pelletState.feedRateTotalAtRefill, 2100)
 })
-check('couvercle resté fermé -> aucun plein', () => {
-  const a = make({ hopperCapacityKg: 40, autoDetectRefill: true })
-  a.updatePelletLevel(sensors(2072))
-  a.updatePelletLevel(sensors(2092))
-  assert.equal(a.pelletLevelPercent, 50)
-})
-check('par défaut (opt-in) -> couvercle ignoré', () => {
+check('avertissement toujours à 0 -> aucun plein', () => {
   reset()
   const a = make({ hopperCapacityKg: 40 })
   a.updatePelletLevel(sensors(2072))
   a.updatePelletLevel(sensors(2092))
-  a.updatePelletLevel(sensors(2092, false))
-  a.updatePelletLevel(sensors(2092, true))
-  assert.equal(a.pelletLevelPercent, 50, 'le niveau ne doit pas être remis à 100')
+  assert.equal(a.pelletLevelPercent, 50)
+})
+check('couvercle encore ouvert -> pas de plein prématuré', () => {
+  reset()
+  const a = make({ hopperCapacityKg: 40 })
+  a.updatePelletLevel(sensors(2072))
+  a.updatePelletLevel(sensors(2092))
+  a.updatePelletLevel(sensors(2092, 2))
+  assert.equal(a.pelletLevelPercent, 50, 'le plein ne compte qu\'à la fermeture')
+})
+check('autre code d\'avertissement -> ignoré', () => {
+  reset()
+  const a = make({ hopperCapacityKg: 40 })
+  a.updatePelletLevel(sensors(2072))
+  a.updatePelletLevel(sensors(2092))
+  a.updatePelletLevel(sensors(2092, 7))   // un autre défaut
+  a.updatePelletLevel(sensors(2092, 0))   // résolu
+  assert.equal(a.pelletLevelPercent, 50, 'seul le code du couvercle compte')
+})
+check('code personnalisable via refillWarningCode', () => {
+  reset()
+  const a = make({ hopperCapacityKg: 40, refillWarningCode: 9 })
+  a.updatePelletLevel(sensors(2072))
+  a.updatePelletLevel(sensors(2092))
+  a.updatePelletLevel(sensors(2092, 9))
+  a.updatePelletLevel(sensors(2092, 0))
+  assert.equal(a.pelletLevelPercent, 100)
+})
+check('autoDetectRefill: false -> aucune détection', () => {
+  reset()
+  const a = make({ hopperCapacityKg: 40, autoDetectRefill: false })
+  a.updatePelletLevel(sensors(2072))
+  a.updatePelletLevel(sensors(2092))
+  a.updatePelletLevel(sensors(2092, 2))
+  a.updatePelletLevel(sensors(2092, 0))
+  assert.equal(a.pelletLevelPercent, 50)
 })
 
 console.log('\n=== COMPTEUR DU POELE REMIS A ZERO (entretien) ===')

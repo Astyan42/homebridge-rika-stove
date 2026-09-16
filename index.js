@@ -22,6 +22,9 @@ const DEFAULT_HOPPER_CAPACITY_KG = 40
 const DEFAULT_LOW_PELLET_PERCENT = 20
 const REFILL_SWITCH_RESET_DELAY = 1000
 const DEFAULT_SERVICE_ALERT_KG = 25
+// Code d'avertissement du poêle signalant le couvercle du réservoir ouvert.
+// Mesuré sur un RIKA Sumo : statusWarning passe de 0 à 2 à l'ouverture.
+const DEFAULT_REFILL_WARNING_CODE = 2
 
 module.exports = (homebridge) => {
   Service = homebridge.hap.Service
@@ -61,12 +64,15 @@ class RIKAFirenetAccessory {
     // quantité relevée lors du dernier plein.
     this.hopperCapacityKg = Number(this.config.hopperCapacityKg) || DEFAULT_HOPPER_CAPACITY_KG
     this.lowPelletPercent = Number(this.config.lowPelletThresholdPercent) || DEFAULT_LOW_PELLET_PERCENT
-    // Opt-in : sur un RIKA Sumo, inputCover reste à true couvercle ouvert.
-    // Voir README, section « Détection automatique ». Désactivé par défaut.
-    this.autoDetectRefill = this.config.autoDetectRefill === true
+    // Le plein est détecté sur le code d'avertissement du poêle, pas sur un
+    // contact : aucun contact de la charge utile FireNet ne bouge à l'ouverture.
+    this.autoDetectRefill = this.config.autoDetectRefill !== false
+    this.refillWarningCode = Number.isFinite(Number(this.config.refillWarningCode))
+      ? Number(this.config.refillWarningCode)
+      : DEFAULT_REFILL_WARNING_CODE
+    this.previousWarning = null
     this.pelletState = { feedRateTotalAtRefill: null, lastRefillAt: null }
     this.lastFeedRateTotal = null
-    this.previousCoverClosed = null
     this.pelletsRemainingKg = this.hopperCapacityKg
     this.pelletLevelPercent = 100
     this.loadPelletState()
@@ -538,15 +544,17 @@ class RIKAFirenetAccessory {
     }
     this.lastFeedRateTotal = total
 
-    // Détection d'un plein : couvercle du réservoir ouvert puis refermé.
-    const coverClosed = sensors.inputCover === true
-    if (this.autoDetectRefill && this.previousCoverClosed === false && coverClosed) {
-      this.log(`✓ Couvercle du réservoir refermé — plein enregistré (compteur à ${total} kg)`)
-      this.previousCoverClosed = coverClosed
+    // Détection d'un plein : le poêle signale le couvercle ouvert par un code
+    // d'avertissement. Sa disparition signe la fermeture, donc la fin du plein.
+    const warning = Number(sensors.statusWarning) || 0
+    const wasOpen = this.previousWarning === this.refillWarningCode
+    this.previousWarning = warning
+
+    if (this.autoDetectRefill && wasOpen && warning === 0) {
+      this.log(`✓ Couvercle du réservoir refermé (avertissement ${this.refillWarningCode} levé) — plein enregistré, compteur à ${total} kg`)
       this.registerRefill(total)
       return
     }
-    this.previousCoverClosed = coverClosed
 
     if (this.pelletState.feedRateTotalAtRefill === null) {
       // Première exécution : on ancre sur la valeur courante en supposant le
