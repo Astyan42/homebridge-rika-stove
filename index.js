@@ -9,7 +9,7 @@
 
 const fs = require('node:fs')
 
-const PLUGIN_NAME = 'homebridge-rika-corso'
+const PLUGIN_NAME = 'homebridge-rika-stove'
 const PLATFORM_NAME = 'RIKAFirenet'
 
 const BASE_URL = 'https://www.rika-firenet.com'

@@ -1,10 +1,14 @@
-# homebridge-rika-corso
+# homebridge-rika-stove
 
 Plugin [Homebridge](https://homebridge.io) pour piloter un poêle RIKA équipé
 d'un module FireNet, exposé dans HomeKit comme un thermostat. Il couvre le
 « mode Confort » du poêle : allumage/extinction et température de consigne.
 
-> **Fork.** Version d'origine : `homebridge-rika-corso@1.0.5` de
+> **Fork** de `homebridge-rika-corso`, publié sous un nom distinct car le nom
+> d'origine appartient à son auteur. Le nom retenu couvre toute la gamme RIKA,
+> le plugin ne se limitant pas au modèle Corso — il est développé sur un Sumo.
+>
+> Version d'origine : `homebridge-rika-corso@1.0.5` de
 > Maël Laroque ([@mael50](https://www.npmjs.com/~zaki_mael)), publiée le
 > 31 octobre 2025. Aucun dépôt public n'étant déclaré dans les métadonnées npm,
 > ce dépôt repart du tarball npm. Licence GNU GPLv3 conservée.
@@ -47,14 +51,11 @@ vérifiées.
 
 Depuis ce dépôt :
 
-```bash
-sudo hb-service add homebridge-rika-corso@git+https://github.com/<compte>/homebridge-rika-corso.git
-```
-
-Ou, sur une installation Homebridge classique :
+Depuis l'onglet *Plugins* de l'interface Homebridge, en cherchant
+« rika ». Ou en ligne de commande :
 
 ```bash
-npm install -g git+https://github.com/<compte>/homebridge-rika-corso.git
+sudo hb-service add homebridge-rika-stove
 ```
 
 ## Configuration

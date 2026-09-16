@@ -1,24 +1,41 @@
 {
-  "name": "homebridge-rika-corso",
+  "name": "homebridge-rika-stove",
   "version": "2.6.0",
-  "description": "Plug-in to control RIKA Corso stoves via the FireNet cloud service using homebridge.",
+  "description": "Homebridge plugin for RIKA pellet stoves via the FireNet cloud service — heating control, calculated pellet level, service and fault indicators. No dependencies.",
   "main": "index.js",
+  "files": [
+    "index.js",
+    "config.schema.json",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "node --check index.js && node test/pellets.test.mjs"
   },
   "keywords": [
+    "corso",
     "firenet",
+    "homebridge",
     "homebridge-plugin",
     "hopper",
     "pellets",
     "poele",
     "rika",
-    "stove"
+    "stove",
+    "sumo"
   ],
   "engines": {
     "node": "^20 || ^22 || ^24 || ^26",
     "homebridge": "^1.8.0 || ^2.0.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Astyan42/homebridge-rika-stove.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Astyan42/homebridge-rika-stove/issues"
+  },
+  "homepage": "https://github.com/Astyan42/homebridge-rika-stove#readme",
   "author": "Maël Laroque (@mael50)",
   "contributors": [
     "Jérémy Deveaux"
