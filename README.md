@@ -196,9 +196,12 @@ par RIKA. Le journal donne les valeurs brutes, à rapprocher de la notice.
 `parameterErrorCount0` à `19` (compteurs cumulés par type d'erreur),
 `statusWifiStrength`, `inputFlameTemperature`, `inputCurrentStage`.
 
-`inputCover` semble être l'inverse exact de `controls.onOff` sur ce modèle
-(`true` poêle éteint, `false` sous tension) : il n'apporte donc rien de plus
-que l'état déjà exposé par le thermostat.
+Le comportement de `inputCover` n'est pas élucidé sur ce modèle. Il a été
+observé à `true` poêle éteint (couvercle ouvert comme fermé), à `false` poêle
+sous tension, puis de nouveau à `true` poêle toujours sous tension — ce qui
+exclut une simple inversion de `controls.onOff`. Les relevés ponctuels ne
+suffisent pas à conclure ; il faudrait une surveillance en continu corrélée à
+des ouvertures horodatées. En l'état, ne pas s'appuyer sur ce champ.
 
 ## Caractéristiques HomeKit exposées
 
