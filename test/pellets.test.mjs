@@ -22,11 +22,15 @@ function FakeService (name) {
 }
 const Service = {
   Thermostat: FakeService, AccessoryInformation: FakeService,
-  Battery: FakeService, Switch: FakeService
+  Battery: FakeService, Switch: FakeService,
+  FilterMaintenance: FakeService, ContactSensor: FakeService
 }
 const Characteristic = new Proxy({
   TemperatureDisplayUnits: { CELSIUS: 0 },
-  ChargingState: { NOT_CHARGEABLE: 2 }
+  ChargingState: { NOT_CHARGEABLE: 2 },
+  FilterChangeIndication: { FILTER_OK: 0, CHANGE_FILTER: 1 },
+  ContactSensorState: { CONTACT_DETECTED: 0, CONTACT_NOT_DETECTED: 1 },
+  StatusFault: { NO_FAULT: 0, GENERAL_FAULT: 1 }
 }, { get: (t, k) => (k in t ? t[k] : String(k)) })
 
 let Accessory
@@ -173,6 +177,66 @@ check('capacité 25 kg : 5 kg consommés -> 80 %', () => {
   a.updatePelletLevel(sensors(1005))
   assert.equal(a.pelletsRemainingKg, 20)
   assert.equal(a.pelletLevelPercent, 80)
+})
+
+console.log('\n=== SANTE : ENTRETIEN ===')
+const health = (countdown, interval = 700, error = 0, subError = 0, warning = 0) => ({
+  parameterServiceCountdownKg: countdown, parameterKgTillCleaning: interval,
+  statusError: error, statusSubError: subError, statusWarning: warning
+})
+check('entretien loin -> non dû, pourcentage correct', () => {
+  const a = make({ serviceAlertKg: 25 })
+  a.updateHealth(health(350))
+  assert.equal(a.serviceDue, false)
+  assert.equal(a.serviceLifePercent, 50)
+})
+check('sous le seuil -> entretien dû, alerte émise une fois', () => {
+  const a = make({ serviceAlertKg: 25 })
+  a.updateHealth(health(350))
+  a.updateHealth(health(4))
+  assert.equal(a.serviceDue, true)
+  assert.equal(messages.filter(m => m.includes('Entretien à prévoir')).length, 1)
+  a.updateHealth(health(3))
+  assert.equal(messages.filter(m => m.includes('Entretien à prévoir')).length, 1, 'ne doit pas répéter')
+})
+check('compteur réarmé -> entretien effectué signalé', () => {
+  const a = make({ serviceAlertKg: 25 })
+  a.updateHealth(health(4))
+  a.updateHealth(health(700))
+  assert.equal(a.serviceDue, false)
+  assert.ok(messages.some(m => m.includes('Entretien effectué')))
+})
+check('intervalle nul ou absent -> ignoré sans exception', () => {
+  const a = make({})
+  a.updateHealth({ parameterServiceCountdownKg: 4, parameterKgTillCleaning: 0, statusError: 0 })
+  assert.equal(a.serviceCountdownKg, null)
+})
+
+console.log('\n=== SANTE : DEFAUT ===')
+check('tout à zéro -> aucun défaut', () => {
+  const a = make({})
+  a.updateHealth(health(350))
+  assert.equal(a.faultActive, false)
+})
+check('statusWarning non nul -> défaut actif', () => {
+  const a = make({})
+  a.updateHealth(health(350, 700, 0, 0, 7))
+  assert.equal(a.faultActive, true)
+  assert.ok(messages.some(m => m.includes('Défaut signalé')))
+  assert.ok(a.faultDetail.includes('statusWarning=7'))
+})
+check('statusError non nul -> défaut actif', () => {
+  const a = make({})
+  a.updateHealth(health(350, 700, 12))
+  assert.equal(a.faultActive, true)
+})
+check('défaut qui disparaît -> résolution signalée, une seule alerte', () => {
+  const a = make({})
+  a.updateHealth(health(350, 700, 0, 0, 7))
+  a.updateHealth(health(350, 700, 0, 0, 7))
+  assert.equal(messages.filter(m => m.includes('Défaut signalé')).length, 1)
+  a.updateHealth(health(350))
+  assert.ok(messages.some(m => m.includes('Défaut résolu')))
 })
 
 console.log(`\n${passed} test(s) réussi(s)`)

@@ -158,6 +158,48 @@ L'API FireNet expose aussi, non exploitées par le plugin pour l'instant :
 (kg avant le prochain grand nettoyage), `parameterRuntimePellets` (heures de
 fonctionnement) et `parameterIgnitionCount` (nombre d'allumages).
 
+## Santé du poêle
+
+Deux indicateurs exposés dans HomeKit, pensés pour être **actionnables** plutôt
+que consultables : ils déclenchent une automatisation ou une notification.
+
+### Entretien à échéance
+
+Le poêle décompte lui-même les kilos de pellets restants avant son grand
+nettoyage (`parameterServiceCountdownKg`, sur un intervalle
+`parameterKgTillCleaning`). C'est présenté comme un **filtre** :
+`FilterLifeLevel` donne le pourcentage restant, et `FilterChangeIndication`
+passe à « à remplacer » sous le seuil `serviceAlertKg`.
+
+### Défaut actif
+
+Un **contact** qui s'ouvre dès que le poêle signale quelque chose :
+`statusError`, `statusSubError` ou `statusWarning` non nul. Le type contact est
+le plus exploitable en automatisation dans l'app Maison. Le détail des codes
+est écrit dans le journal Homebridge à chaque apparition et à chaque
+résolution. Le thermostat porte en plus `StatusFault`.
+
+Les codes ne sont pas traduits en texte : la correspondance n'est pas publiée
+par RIKA. Le journal donne les valeurs brutes, à rapprocher de la notice.
+
+### Options
+
+| Option | Défaut | Description |
+|---|---|---|
+| `healthSensors` | `true` | Expose les deux indicateurs |
+| `serviceAlertKg` | `25` | Seuil d'alerte d'entretien, en kg restants |
+
+### Autres données disponibles, non exposées
+
+`parameterRuntimePellets` (heures de fonctionnement),
+`parameterIgnitionCount` (allumages), `parameterOnOffCycleCount`,
+`parameterErrorCount0` à `19` (compteurs cumulés par type d'erreur),
+`statusWifiStrength`, `inputFlameTemperature`, `inputCurrentStage`.
+
+`inputCover` semble être l'inverse exact de `controls.onOff` sur ce modèle
+(`true` poêle éteint, `false` sous tension) : il n'apporte donc rien de plus
+que l'état déjà exposé par le thermostat.
+
 ## Caractéristiques HomeKit exposées
 
 Le poêle est présenté comme un `Thermostat` :
@@ -168,8 +210,12 @@ Le poêle est présenté comme un `Thermostat` :
 - `TargetTemperature` — consigne du mode Confort, de 14 à 28 °C
 - `TemperatureDisplayUnits` — Celsius
 
-Plus un service `Battery` (`BatteryLevel`, `StatusLowBattery`) pour le niveau de
-pellets, et un `Switch` « plein » si `refillSwitch` est actif.
+Plus :
+
+- un service `Battery` (`BatteryLevel`, `StatusLowBattery`) pour le niveau de pellets ;
+- un `Switch` « plein » si `refillSwitch` est actif ;
+- un `FilterMaintenance` « entretien » et un `ContactSensor` « défaut » si
+  `healthSensors` est actif, ainsi que `StatusFault` sur le thermostat.
 
 ## Modèles
 

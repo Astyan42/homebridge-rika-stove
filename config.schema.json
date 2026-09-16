@@ -83,6 +83,22 @@
         "default": true,
         "required": false,
         "description": "Ajoute un interrupteur dans l'app Maison pour enregistrer un plein. C'est le mécanisme fiable : laissez-le actif."
+      },
+      "healthSensors": {
+        "title": "Exposer les capteurs de santé",
+        "type": "boolean",
+        "default": true,
+        "required": false,
+        "description": "Ajoute dans HomeKit un indicateur d'entretien à échéance et un contact « défaut » signalant les erreurs remontées par le poêle."
+      },
+      "serviceAlertKg": {
+        "title": "Alerte d'entretien à partir de (kg restants)",
+        "type": "integer",
+        "default": 25,
+        "minimum": 1,
+        "maximum": 500,
+        "required": false,
+        "description": "Le poêle décompte les kg de pellets avant son grand nettoyage. En dessous de ce seuil, HomeKit signale l'entretien comme dû — utilisable dans une automatisation."
       }
     }
   }

@@ -21,6 +21,7 @@ const CONFIRM_DELAY = 2000
 const DEFAULT_HOPPER_CAPACITY_KG = 40
 const DEFAULT_LOW_PELLET_PERCENT = 20
 const REFILL_SWITCH_RESET_DELAY = 1000
+const DEFAULT_SERVICE_ALERT_KG = 25
 
 module.exports = (homebridge) => {
   Service = homebridge.hap.Service
@@ -69,6 +70,15 @@ class RIKAFirenetAccessory {
     this.pelletsRemainingKg = this.hopperCapacityKg
     this.pelletLevelPercent = 100
     this.loadPelletState()
+
+    // --- Santé du poêle ---
+    this.serviceAlertKg = Number(this.config.serviceAlertKg) || DEFAULT_SERVICE_ALERT_KG
+    this.healthSensors = this.config.healthSensors !== false
+    this.serviceCountdownKg = null
+    this.serviceLifePercent = 100
+    this.serviceDue = false
+    this.faultActive = false
+    this.faultDetail = ''
 
     this.loginToFirenet(() => {
       this.updateStatus()
@@ -139,6 +149,29 @@ class RIKAFirenetAccessory {
     )
 
     const services = [informationService, this.service, this.batteryService]
+
+    // --- Santé : entretien et défaut ---
+    if (this.healthSensors) {
+      // L'entretien est présenté comme un filtre : HomeKit affiche un
+      // pourcentage de vie restante et un indicateur « à remplacer ».
+      this.serviceService = new Service.FilterMaintenance(`${this.config.name} entretien`, 'service')
+      this.serviceService.getCharacteristic(Characteristic.FilterChangeIndication)
+          .on('get', (callback) => callback(null, this.serviceDue
+            ? Characteristic.FilterChangeIndication.CHANGE_FILTER
+            : Characteristic.FilterChangeIndication.FILTER_OK))
+      this.serviceService.getCharacteristic(Characteristic.FilterLifeLevel)
+          .on('get', (callback) => callback(null, this.serviceLifePercent))
+      services.push(this.serviceService)
+
+      // Un contact est le type le plus exploitable en automatisation :
+      // ouvert = le poêle signale un défaut.
+      this.faultService = new Service.ContactSensor(`${this.config.name} défaut`, 'fault')
+      this.faultService.getCharacteristic(Characteristic.ContactSensorState)
+          .on('get', (callback) => callback(null, this.faultActive
+            ? Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
+            : Characteristic.ContactSensorState.CONTACT_DETECTED))
+      services.push(this.faultService)
+    }
 
     // --- Interrupteur « plein effectué » ---
     if (this.config.refillSwitch !== false) {
@@ -348,6 +381,9 @@ class RIKAFirenetAccessory {
         // Niveau de pellets déduit du compteur cumulatif
         this.updatePelletLevel(body.sensors)
 
+        // Entretien et défauts
+        this.updateHealth(body.sensors)
+
         // Mise à jour des valeurs dans HomeKit
         this.service.getCharacteristic(Characteristic.CurrentHeatingCoolingState).updateValue(this.CurrentHeatingCoolingState)
         this.service.getCharacteristic(Characteristic.TargetHeatingCoolingState).updateValue(this.TargetHeatingCoolingState)
@@ -363,6 +399,69 @@ class RIKAFirenetAccessory {
       this.log('Erreur serveur Firenet - Le poêle est-il lié à ce compte?')
     } else {
       this.log(`Erreur inattendue: ${status}`)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Santé du poêle : entretien à échéance et défaut actif
+  // ---------------------------------------------------------------------------
+
+  updateHealth (sensors) {
+    // --- Entretien : le poêle décompte lui-même les kg restants ---
+    const countdown = Number(sensors.parameterServiceCountdownKg)
+    const interval = Number(sensors.parameterKgTillCleaning)
+    if (Number.isFinite(countdown) && Number.isFinite(interval) && interval > 0) {
+      const wasDue = this.serviceDue
+      this.serviceCountdownKg = countdown
+      this.serviceLifePercent = Math.max(0, Math.min(100, Math.round((countdown / interval) * 100)))
+      this.serviceDue = countdown <= this.serviceAlertKg
+
+      if (this.serviceDue && !wasDue) {
+        this.log(`⚠ Entretien à prévoir : encore ${countdown} kg de pellets avant le grand nettoyage (intervalle ${interval} kg)`)
+      } else if (!this.serviceDue && wasDue) {
+        this.log(`✓ Entretien effectué — compteur réarmé à ${countdown} kg`)
+      } else {
+        this.log.debug(`Entretien: ${countdown} kg restants sur ${interval} (${this.serviceLifePercent} %)`)
+      }
+    }
+
+    // --- Défaut actif : erreur, sous-erreur ou avertissement non nul ---
+    const error = Number(sensors.statusError) || 0
+    const subError = Number(sensors.statusSubError) || 0
+    const warning = Number(sensors.statusWarning) || 0
+    const wasFault = this.faultActive
+    this.faultActive = error !== 0 || subError !== 0 || warning !== 0
+    this.faultDetail = `statusError=${error} statusSubError=${subError} statusWarning=${warning}`
+
+    if (this.faultActive && !wasFault) {
+      this.log(`⚠ Défaut signalé par le poêle — ${this.faultDetail}`)
+    } else if (!this.faultActive && wasFault) {
+      this.log('✓ Défaut résolu — le poêle ne signale plus rien')
+    }
+
+    this.publishHealth()
+  }
+
+  publishHealth () {
+    if (this.serviceService) {
+      this.serviceService.getCharacteristic(Characteristic.FilterChangeIndication)
+          .updateValue(this.serviceDue
+            ? Characteristic.FilterChangeIndication.CHANGE_FILTER
+            : Characteristic.FilterChangeIndication.FILTER_OK)
+      this.serviceService.getCharacteristic(Characteristic.FilterLifeLevel)
+          .updateValue(this.serviceLifePercent)
+    }
+    if (this.faultService) {
+      this.faultService.getCharacteristic(Characteristic.ContactSensorState)
+          .updateValue(this.faultActive
+            ? Characteristic.ContactSensorState.CONTACT_NOT_DETECTED
+            : Characteristic.ContactSensorState.CONTACT_DETECTED)
+    }
+    if (this.service) {
+      this.service.getCharacteristic(Characteristic.StatusFault)
+          .updateValue(this.faultActive
+            ? Characteristic.StatusFault.GENERAL_FAULT
+            : Characteristic.StatusFault.NO_FAULT)
     }
   }
 
