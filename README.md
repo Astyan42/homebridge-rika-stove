@@ -253,7 +253,7 @@ invisibles.
 
 | Accessoire | Service | Ce qu'Apple Home montre |
 |---|---|---|
-| `Poele` | `Thermostat` + `StatusFault` | température, consigne, marche/arrêt |
+| `Poele` | `Thermostat` | température, consigne, marche/arrêt |
 | `Poele pellets` | `HumiditySensor` + `Battery` | pourcentage de pellets restants |
 | `Poele plein` | `Switch` | interrupteur d'enregistrement du plein |
 | `Poele entretien` | `ContactSensor` + `FilterMaintenance` | ouvert = entretien à faire |

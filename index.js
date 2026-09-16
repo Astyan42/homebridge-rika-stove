@@ -286,14 +286,13 @@ class RIKAFirenetPlatform {
     t.getCharacteristic(C.CurrentTemperature)
         .onGet(() => this.readCharacteristic('CurrentTemperature'))
         .setProps({ minValue: -50, maxValue: 100, minStep: 0.1 })
-    t.getCharacteristic(C.TargetTemperature)
-        .onGet(() => this.readCharacteristic('TargetTemperature'))
-        .onSet((value) => this.setTargetTemperature(value))
-        .setProps({ minValue: 14, maxValue: 28, minStep: 1 })
+    const target = t.getCharacteristic(C.TargetTemperature)
+    target.setProps({ minValue: 14, maxValue: 28, minStep: 1 })
+    target.updateValue(this.TargetTemperature)
+    target.onGet(() => this.readCharacteristic('TargetTemperature'))
+          .onSet((value) => this.setTargetTemperature(value))
     t.getCharacteristic(C.TemperatureDisplayUnits)
         .onGet(() => C.TemperatureDisplayUnits.CELSIUS)
-    t.getCharacteristic(C.StatusFault)
-        .onGet(() => this.faultActive ? C.StatusFault.GENERAL_FAULT : C.StatusFault.NO_FAULT)
     this.services.thermostat = t
     ;(thermostat.isNew ? created : []).push(thermostat.accessory)
 
@@ -609,10 +608,6 @@ class RIKAFirenetPlatform {
     if (this.services.fault) {
       this.services.fault.getCharacteristic(C.ContactSensorState)
           .updateValue(this.faultActive ? C.ContactSensorState.CONTACT_NOT_DETECTED : C.ContactSensorState.CONTACT_DETECTED)
-    }
-    if (this.services.thermostat) {
-      this.services.thermostat.getCharacteristic(C.StatusFault)
-          .updateValue(this.faultActive ? C.StatusFault.GENERAL_FAULT : C.StatusFault.NO_FAULT)
     }
   }
 

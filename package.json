@@ -1,6 +1,6 @@
 {
   "name": "homebridge-rika-corso",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Plug-in to control RIKA Corso stoves via the FireNet cloud service using homebridge.",
   "main": "index.js",
   "scripts": {
