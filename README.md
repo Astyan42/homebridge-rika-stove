@@ -247,7 +247,7 @@ s'appuyer sur ce champ — c'est `statusWarning` qui porte l'information.
 
 | Accessoire | Service | Ce qu'Apple Home montre |
 |---|---|---|
-| `Poele` | `HeaterCooler` + `Battery` | marche/arrêt, température, consigne, et le **niveau de pellets sur le curseur** |
+| `Poele` | `HeaterCooler` + `Fanv2` + `Battery` | marche/arrêt, température, consigne, et un **bloc dédié au niveau de pellets** |
 | `Poele plein` | `Switch` | interrupteur d'enregistrement du plein |
 | `Poele entretien` | `ContactSensor` + `FilterMaintenance` | ouvert = entretien à faire |
 | `Poele défaut` | `ContactSensor` | ouvert = le poêle signale un défaut |
@@ -271,14 +271,37 @@ Le poêle ne sachant que chauffer, un seul mode est proposé. Catégorie
 
 ### Niveau de pellets
 
-Il occupe la caractéristique `RotationSpeed`, dont l'unité est déjà un
+Il est porté par un **service `Fanv2` distinct**, sur le même accessoire que
+le poêle, avec la caractéristique `RotationSpeed` dont l'unité est déjà un
 pourcentage.
 
-Sa **permission d'écriture est conservée volontairement**. La retirer semblait
-plus juste — un niveau se lit, il ne se règle pas — mais Apple Home n'affiche
-pas une caractéristique en lecture seule dans cette vue : la jauge devenait
-invisible. Le curseur reste donc glissable, et une écriture est acceptée puis
-annulée au bout de 400 ms, ce qui le ramène au niveau réel.
+C'est la structure qu'emploient les climatiseurs, et elle seule donne le
+résultat voulu : Apple Home réserve un **bloc de contrôle propre** aux
+services ventilateur, en bas de la fiche de l'accessoire. La même
+caractéristique accrochée au `HeaterCooler` était reléguée dans la sous-page
+des réglages, derrière la roue dentée.
+
+Deux permissions sont conservées volontairement, contre l'intuition :
+
+- **`RotationSpeed` reste inscriptible.** La passer en lecture seule semblait
+  plus juste — un niveau se lit — mais Apple Home n'affiche pas une
+  caractéristique en lecture seule. Une écriture est donc acceptée puis
+  annulée après 400 ms, ce qui ramène le curseur au niveau réel.
+- **`Active` est toujours renvoyé actif**, une extinction étant annulée de la
+  même façon : un bloc inactif n'affiche pas sa valeur. Le niveau reste ainsi
+  lisible poêle éteint, ce qui est justement le moment où on veut le
+  connaître.
+
+### Ce qu'Apple Home affiche, et où
+
+| Élément | Emplacement |
+|---|---|
+| Température, consigne, marche/arrêt | tuile et fiche |
+| **Niveau de pellets** | **bloc ventilateur, en bas de la fiche** |
+| Niveau bas, entretien, défaut | badge et accessoires dédiés |
+
+Rien d'autre que la température ne peut apparaître sur la vignette elle-même :
+c'est une contrainte d'Apple Home, pas du plugin.
 
 Un service `Battery` porté par le même accessoire double l'information et
 fournit le signalement de niveau bas sous le seuil configuré, exploitable en

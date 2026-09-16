@@ -32,7 +32,7 @@ const DEFAULT_REFILL_WARNING_CODE = 2
 // caractéristiques, de bornes ou de permissions : Homebridge restaure les
 // accessoires depuis son cache, et un setProps sur un service restauré n'est
 // pas repris. Le service est alors reconstruit une fois, proprement.
-const SERVICE_SHAPE = 4
+const SERVICE_SHAPE = 5
 
 module.exports = (api) => {
   api.registerPlatform(PLATFORM_NAME, RIKAFirenetPlatform)
@@ -268,7 +268,11 @@ class RIKAFirenetPlatform {
   }
 
   // Récupère un service existant ou le crée, sans dupliquer au redémarrage.
-  serviceOn (accessory, type, displayName) {
+  serviceOn (accessory, type, displayName, subtype) {
+    if (subtype) {
+      return accessory.getServiceById(type, subtype) ||
+             accessory.addService(type, displayName, subtype)
+    }
     return accessory.getService(type) || accessory.addService(type, displayName)
   }
 
@@ -324,25 +328,36 @@ class RIKAFirenetPlatform {
     threshold.onGet(() => this.readCharacteristic('TargetTemperature'))
              .onSet((value) => this.setTargetTemperature(value))
 
-    // Le niveau de pellets, porté par le curseur que HomeKit place à côté de
-    // la température — celui de la ventilation sur un climatiseur. Sa
-    // caractéristique est déjà en pourcentage.
-    //
-    // La permission d'écriture est conservée volontairement : Apple Home
-    // n'affiche pas une caractéristique en lecture seule dans cette vue, et la
-    // retirer rendait la jauge invisible. Une écriture est donc acceptée puis
-    // annulée — le curseur revient au niveau réel.
-    const gauge = h.getCharacteristic(C.RotationSpeed)
-    gauge.setProps({ minValue: 0, maxValue: 100, minStep: 1 })
-    gauge.updateValue(this.pelletLevelPercent)
-    gauge.onGet(() => this.pelletLevelPercent)
+    // Le niveau de pellets, porté par un service ventilateur distinct. C'est
+    // la structure qu'emploient les climatiseurs : Apple Home leur donne un
+    // bloc de contrôle propre, en bas de la fiche de l'accessoire. Accrochée
+    // au HeaterCooler, la même caractéristique était reléguée dans la
+    // sous-page des réglages.
+    const gauge = this.serviceOn(heater.accessory, this.Service.Fanv2, `${this.name} pellets`, 'pellets')
+
+    // Le bloc doit être actif pour que sa valeur s'affiche ; une extinction
+    // est annulée. Le niveau reste lisible poêle éteint, ce qui est justement
+    // le moment où on veut le connaître.
+    gauge.getCharacteristic(C.Active)
+        .onGet(() => C.Active.ACTIVE)
         .onSet(() => {
-          this.log.debug('Curseur de niveau déplacé — retour à la valeur réelle')
-          setTimeout(() => gauge.updateValue(this.pelletLevelPercent), GAUGE_REVERT_DELAY)
+          setTimeout(() => gauge.updateCharacteristic(C.Active, C.Active.ACTIVE), GAUGE_REVERT_DELAY)
         })
 
-    // Niveau de pellets sur le même accessoire : Apple Home affiche le
-    // pourcentage dans la fiche du poêle et signale le niveau bas.
+    // La permission d'écriture est conservée volontairement : Apple Home
+    // n'affiche pas une caractéristique en lecture seule. Une écriture est
+    // donc acceptée puis annulée — le curseur revient au niveau réel.
+    const level = gauge.getCharacteristic(C.RotationSpeed)
+    level.setProps({ minValue: 0, maxValue: 100, minStep: 1 })
+    level.updateValue(this.pelletLevelPercent)
+    level.onGet(() => this.pelletLevelPercent)
+        .onSet(() => {
+          this.log.debug('Curseur de niveau déplacé — retour à la valeur réelle')
+          setTimeout(() => level.updateValue(this.pelletLevelPercent), GAUGE_REVERT_DELAY)
+        })
+    this.services.gauge = gauge
+
+    // Le service Battery double l'information et porte l'alerte de niveau bas.
     const heaterBattery = this.serviceOn(heater.accessory, this.Service.Battery, `${this.name} pellets`)
     heaterBattery.getCharacteristic(C.BatteryLevel).onGet(() => this.pelletLevelPercent)
     heaterBattery.getCharacteristic(C.StatusLowBattery)
@@ -802,8 +817,8 @@ class RIKAFirenetPlatform {
   publishPelletLevel () {
     const C = this.Characteristic
     const low = this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0
-    if (this.services.heater) {
-      this.services.heater.getCharacteristic(C.RotationSpeed)
+    if (this.services.gauge) {
+      this.services.gauge.getCharacteristic(C.RotationSpeed)
           .updateValue(this.pelletLevelPercent)
     }
     if (this.services.pelletLevel) {
