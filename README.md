@@ -272,9 +272,13 @@ Le poêle ne sachant que chauffer, un seul mode est proposé. Catégorie
 ### Niveau de pellets
 
 Il occupe la caractéristique `RotationSpeed`, dont l'unité est déjà un
-pourcentage. **Sa permission d'écriture est retirée** (`perms` réduit à
-`PAIRED_READ` et `NOTIFY`) : le curseur devient une jauge, non glissable — un
-niveau se lit, il ne se règle pas.
+pourcentage.
+
+Sa **permission d'écriture est conservée volontairement**. La retirer semblait
+plus juste — un niveau se lit, il ne se règle pas — mais Apple Home n'affiche
+pas une caractéristique en lecture seule dans cette vue : la jauge devenait
+invisible. Le curseur reste donc glissable, et une écriture est acceptée puis
+annulée au bout de 400 ms, ce qui le ramène au niveau réel.
 
 Un service `Battery` porté par le même accessoire double l'information et
 fournit le signalement de niveau bas sous le seuil configuré, exploitable en

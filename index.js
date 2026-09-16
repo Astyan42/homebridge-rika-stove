@@ -20,6 +20,7 @@ const DEFAULT_UPDATE_INTERVAL = 60000
 const RELOGIN_DELAY = 30000
 const CONFIRM_DELAY = 2000
 const REFILL_SWITCH_RESET_DELAY = 1000
+const GAUGE_REVERT_DELAY = 400
 const DEFAULT_HOPPER_CAPACITY_KG = 40
 const DEFAULT_LOW_PELLET_PERCENT = 20
 const DEFAULT_SERVICE_ALERT_KG = 25
@@ -31,7 +32,7 @@ const DEFAULT_REFILL_WARNING_CODE = 2
 // caractéristiques, de bornes ou de permissions : Homebridge restaure les
 // accessoires depuis son cache, et un setProps sur un service restauré n'est
 // pas repris. Le service est alors reconstruit une fois, proprement.
-const SERVICE_SHAPE = 3
+const SERVICE_SHAPE = 4
 
 module.exports = (api) => {
   api.registerPlatform(PLATFORM_NAME, RIKAFirenetPlatform)
@@ -325,18 +326,20 @@ class RIKAFirenetPlatform {
 
     // Le niveau de pellets, porté par le curseur que HomeKit place à côté de
     // la température — celui de la ventilation sur un climatiseur. Sa
-    // caractéristique est déjà en pourcentage. La permission d'écriture est
-    // retirée : un niveau se lit, il ne se règle pas.
-    const Perms = this.api.hap.Perms
+    // caractéristique est déjà en pourcentage.
+    //
+    // La permission d'écriture est conservée volontairement : Apple Home
+    // n'affiche pas une caractéristique en lecture seule dans cette vue, et la
+    // retirer rendait la jauge invisible. Une écriture est donc acceptée puis
+    // annulée — le curseur revient au niveau réel.
     const gauge = h.getCharacteristic(C.RotationSpeed)
-    gauge.setProps({
-      minValue: 0,
-      maxValue: 100,
-      minStep: 1,
-      perms: [Perms.PAIRED_READ, Perms.NOTIFY]
-    })
+    gauge.setProps({ minValue: 0, maxValue: 100, minStep: 1 })
     gauge.updateValue(this.pelletLevelPercent)
     gauge.onGet(() => this.pelletLevelPercent)
+        .onSet(() => {
+          this.log.debug('Curseur de niveau déplacé — retour à la valeur réelle')
+          setTimeout(() => gauge.updateValue(this.pelletLevelPercent), GAUGE_REVERT_DELAY)
+        })
 
     // Niveau de pellets sur le même accessoire : Apple Home affiche le
     // pourcentage dans la fiche du poêle et signale le niveau bas.
