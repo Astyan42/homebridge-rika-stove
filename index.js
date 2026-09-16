@@ -27,6 +27,11 @@ const DEFAULT_SERVICE_ALERT_KG = 25
 // Mesuré sur un RIKA Sumo : statusWarning passe de 0 à 2 à l'ouverture, et
 // revient à 0 à la fermeture. La porte du foyer ne lève aucun code.
 const DEFAULT_REFILL_WARNING_CODE = 2
+// Forme des services publiés. À incrémenter dès qu'un service change de
+// caractéristiques, de bornes ou de permissions : Homebridge restaure les
+// accessoires depuis son cache, et un setProps sur un service restauré n'est
+// pas repris. Le service est alors reconstruit une fois, proprement.
+const SERVICE_SHAPE = 3
 
 module.exports = (api) => {
   api.registerPlatform(PLATFORM_NAME, RIKAFirenetPlatform)
@@ -286,6 +291,15 @@ class RIKAFirenetPlatform {
       heater.accessory.removeService(legacy)
       this.log('Service Thermostat remplacé par HeaterCooler')
     }
+
+    // Un service restauré conserve les bornes et permissions du cache. S'il
+    // date d'une forme antérieure, on le reconstruit au lieu de le corriger.
+    const stale = heater.accessory.getService(this.Service.HeaterCooler)
+    if (stale && heater.accessory.context.serviceShape !== SERVICE_SHAPE) {
+      heater.accessory.removeService(stale)
+      this.log(`Service HeaterCooler reconstruit (forme ${heater.accessory.context.serviceShape || '?'} -> ${SERVICE_SHAPE})`)
+    }
+    heater.accessory.context.serviceShape = SERVICE_SHAPE
 
     const h = this.serviceOn(heater.accessory, this.Service.HeaterCooler, this.name)
 
