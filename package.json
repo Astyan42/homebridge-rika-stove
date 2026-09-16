@@ -1,0 +1,20 @@
+{
+  "name": "homebridge-rika-corso",
+  "version": "1.0.5",
+  "description": "Plug-in to control RIKA Corso stoves via the FireNet cloud service using homebridge.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "homebridge-plugin"
+  ],
+  "engines": {
+    "homebridge": ">=0.2.5"
+  },
+  "author": "Maël Laroque (@mael50)",
+  "license": "GNU GPLv3",
+  "dependencies": {
+    "request": "github:request/request"
+  }
+}
