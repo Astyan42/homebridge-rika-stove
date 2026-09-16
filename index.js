@@ -309,13 +309,20 @@ class RIKAFirenetPlatform {
     threshold.onGet(() => this.readCharacteristic('TargetTemperature'))
              .onSet((value) => this.setTargetTemperature(value))
 
-    // La puissance de chauffe du poêle, exposée comme une vitesse : c'est le
-    // curseur que HomeKit affiche à côté de la température.
-    const power = h.getCharacteristic(C.RotationSpeed)
-    power.setProps({ minValue: 0, maxValue: 100, minStep: 10 })
-    power.updateValue(this.HeatingPower)
-    power.onGet(() => this.readCharacteristic('HeatingPower'))
-         .onSet((value) => this.setHeatingPower(value))
+    // Le niveau de pellets, porté par le curseur que HomeKit place à côté de
+    // la température — celui de la ventilation sur un climatiseur. Sa
+    // caractéristique est déjà en pourcentage. La permission d'écriture est
+    // retirée : un niveau se lit, il ne se règle pas.
+    const Perms = this.api.hap.Perms
+    const gauge = h.getCharacteristic(C.RotationSpeed)
+    gauge.setProps({
+      minValue: 0,
+      maxValue: 100,
+      minStep: 1,
+      perms: [Perms.PAIRED_READ, Perms.NOTIFY]
+    })
+    gauge.updateValue(this.pelletLevelPercent)
+    gauge.onGet(() => this.pelletLevelPercent)
 
     // Niveau de pellets sur le même accessoire : Apple Home affiche le
     // pourcentage dans la fiche du poêle et signale le niveau bas.
@@ -464,14 +471,6 @@ class RIKAFirenetPlatform {
     await this.updateCharacteristic('onOff', value === 1 || value === true)
   }
 
-  async setHeatingPower (value) {
-    // Le poêle refuse les valeurs hors de sa plage ; on relit son état juste
-    // après l'envoi, ce qui remet le curseur sur la valeur réellement retenue.
-    this.log(`Puissance de chauffe: ${value} %`)
-    this.HeatingPower = value
-    await this.updateCharacteristic('heatingPower', value)
-  }
-
   async setTargetTemperature (value) {
     this.log(`Température cible mode confort: ${value}°C`)
     this.TargetTemperature = value
@@ -535,9 +534,12 @@ class RIKAFirenetPlatform {
       } else {
         this.CurrentHeaterCoolerState = 1 // IDLE, sous tension sans flamme
       }
+      // Puissance de chauffe : relevée pour le journal. Elle n'occupe plus le
+      // curseur, désormais dédié au niveau de pellets.
       const power = Number(body.controls.heatingPower)
       if (Number.isFinite(power)) {
         this.HeatingPower = power
+        this.log.debug(`Puissance de chauffe du poêle: ${power} %`)
       }
 
       this.latestUpdateTimestamp = Date.now()
@@ -559,7 +561,6 @@ class RIKAFirenetPlatform {
     h.getCharacteristic(C.CurrentHeaterCoolerState).updateValue(this.CurrentHeaterCoolerState)
     h.getCharacteristic(C.CurrentTemperature).updateValue(this.CurrentTemperature)
     h.getCharacteristic(C.HeatingThresholdTemperature).updateValue(this.TargetTemperature)
-    h.getCharacteristic(C.RotationSpeed).updateValue(this.HeatingPower)
   }
 
   async updateCharacteristic (controlItem, value) {
@@ -784,6 +785,10 @@ class RIKAFirenetPlatform {
   publishPelletLevel () {
     const C = this.Characteristic
     const low = this.pelletLevelPercent <= this.lowPelletPercent ? 1 : 0
+    if (this.services.heater) {
+      this.services.heater.getCharacteristic(C.RotationSpeed)
+          .updateValue(this.pelletLevelPercent)
+    }
     if (this.services.pelletLevel) {
       this.services.pelletLevel.getCharacteristic(C.CurrentRelativeHumidity)
           .updateValue(this.pelletLevelPercent)

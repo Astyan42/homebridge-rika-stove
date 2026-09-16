@@ -2,7 +2,7 @@
   "pluginAlias": "RIKAFirenet",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Pilotage d'un poêle RIKA via le service cloud FireNet. Le poêle est exposé comme un chauffage : température, marche/arrêt et puissance de chauffe dans une même tuile, avec le niveau de pellets en indicateur de charge.",
+  "headerDisplay": "Pilotage d'un poêle RIKA via le service cloud FireNet. Le poêle est exposé comme un chauffage : température et marche/arrêt, avec le niveau de pellets sur le curseur que HomeKit réserve à la ventilation des climatiseurs.",
   "footerDisplay": "Le `stoveID` est visible dans l'URL de rika-firenet.com une fois connecté : `/web/summary/<stoveID>`.\n\nLe niveau de pellets est **calculé**, le poêle n'ayant aucun capteur de niveau : il déduit le restant du compteur cumulatif du poêle et de la quantité relevée au dernier plein. La résolution est de 1 kg.",
   "schema": {
     "type": "object",

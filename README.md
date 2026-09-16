@@ -247,7 +247,7 @@ s'appuyer sur ce champ — c'est `statusWarning` qui porte l'information.
 
 | Accessoire | Service | Ce qu'Apple Home montre |
 |---|---|---|
-| `Poele` | `HeaterCooler` + `Battery` | marche/arrêt, température, consigne, **curseur de puissance**, et le niveau de pellets en charge |
+| `Poele` | `HeaterCooler` + `Battery` | marche/arrêt, température, consigne, et le **niveau de pellets sur le curseur** |
 | `Poele plein` | `Switch` | interrupteur d'enregistrement du plein |
 | `Poele entretien` | `ContactSensor` + `FilterMaintenance` | ouvert = entretien à faire |
 | `Poele défaut` | `ContactSensor` | ouvert = le poêle signale un défaut |
@@ -262,25 +262,35 @@ avec le poêle.
 ### Pourquoi HeaterCooler et pas Thermostat
 
 `Thermostat` n'offre qu'une consigne de température. `HeaterCooler` donne la
-tuile riche des climatiseurs : marche/arrêt, température courante, consigne et
-un curseur supplémentaire. Ce curseur porte la **puissance de chauffe réelle**
-du poêle (`controls.heatingPower`, en pourcentage) — c'est un vrai réglage,
-pas un affichage détourné. Le poêle ne sachant que chauffer, un seul mode est
-proposé.
+tuile riche des climatiseurs : marche/arrêt, température courante, consigne, et
+**un curseur supplémentaire** — celui qui porte la ventilation sur un
+climatiseur. C'est ce curseur qui affiche ici le niveau de pellets.
 
-Le poêle est déclaré en catégorie `AIR_HEATER`.
+Le poêle ne sachant que chauffer, un seul mode est proposé. Catégorie
+`AIR_HEATER`.
 
 ### Niveau de pellets
 
-Il est exposé par un service `Battery` porté par le poêle lui-même :
-pourcentage dans la fiche de l'accessoire, et signalement de niveau bas sous
-le seuil configuré. C'est l'unique représentation d'un pourcentage qu'Apple
-Home rende sans détourner un type d'accessoire.
+Il occupe la caractéristique `RotationSpeed`, dont l'unité est déjà un
+pourcentage. **Sa permission d'écriture est retirée** (`perms` réduit à
+`PAIRED_READ` et `NOTIFY`) : le curseur devient une jauge, non glissable — un
+niveau se lit, il ne se règle pas.
+
+Un service `Battery` porté par le même accessoire double l'information et
+fournit le signalement de niveau bas sous le seuil configuré, exploitable en
+automatisation.
 
 L'option `pelletSensorAccessory` publie en plus une tuile autonome, via un
 capteur d'humidité — seul type qu'Apple Home affiche en pourcentage sur une
-tuile. Le libellé parle alors d'humidité alors que la valeur est le niveau de
-pellets : c'est pourquoi cette option est désactivée par défaut.
+tuile propre. Le libellé parle alors d'humidité alors que la valeur est le
+niveau de pellets : c'est pourquoi cette option est désactivée par défaut.
+
+### Puissance de chauffe
+
+`controls.heatingPower` est relevée et journalisée en niveau `debug`, mais
+n'est pas exposée : le curseur unique de `HeaterCooler` est pris par le niveau
+de pellets. Elle pourrait être publiée comme un accessoire ventilateur séparé
+si le besoin s'en faisait sentir.
 
 ### Identifiants stables
 
