@@ -157,6 +157,20 @@
         "default": "Flamme",
         "required": false,
         "description": "Étiquette du bloc dans la fiche du poêle."
+      },
+      "dataLog": {
+        "title": "Journaliser les mesures",
+        "type": "boolean",
+        "default": false,
+        "required": false,
+        "description": "Écrit une ligne par relevé dans un fichier CSV mensuel : températures, consigne, état de combustion, puissance, pellets et codes d'erreur. Utile pour analyser le comportement du chauffage dans un tableur."
+      },
+      "dataLogDir": {
+        "title": "Dossier du journal de mesures",
+        "type": "string",
+        "default": "/var/lib/homebridge/mesures",
+        "required": false,
+        "description": "Emplacement des fichiers poele-AAAA-MM.csv."
       }
     }
   }

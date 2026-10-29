@@ -308,6 +308,40 @@ await (async () => {
   })
 })()
 
+console.log('\n=== JOURNAL DE MESURES ===')
+await (async () => {
+  const dir = `${tmp}/mesures`
+  const a = make({ dataLog: true, dataLogDir: dir })
+  await withStatus(a, { onOff: true, mainState: 4, power: 60, temp: '21.5', target: '20' })
+  const mois = new Date().toISOString().slice(0, 7)
+  const f = `${dir}/poele-${mois}.csv`
+  check('fichier mensuel créé avec son en-tête', () => {
+    assert.ok(fs.existsSync(f))
+    const lignes = fs.readFileSync(f, 'utf8').trim().split('\n')
+    assert.ok(lignes[0].startsWith('horodatage;sonde_poele;consigne'))
+    assert.equal(lignes.length, 2, 'en-tête + une mesure')
+  })
+  await withStatus(a, { onOff: true, mainState: 4 })
+  check('les relevés suivants sont ajoutés, pas réécrits', () => {
+    assert.equal(fs.readFileSync(f, 'utf8').trim().split('\n').length, 3)
+  })
+  check('décimales en virgule, séparateur point-virgule', () => {
+    const l = fs.readFileSync(f, 'utf8').trim().split('\n')[1].split(';')
+    assert.equal(l.length, 15)
+    assert.ok(l[1].includes(','), 'température en virgule décimale')
+  })
+  const b = make({ dataLog: false, dataLogDir: `${tmp}/aucun` })
+  await withStatus(b, { onOff: true, mainState: 4 })
+  check('désactivé par défaut : aucun fichier', () => {
+    assert.ok(!fs.existsSync(`${tmp}/aucun`))
+  })
+  const c = make({ dataLog: true, dataLogDir: '/proc/interdit' })
+  await withStatus(c, { onOff: true, mainState: 4 })
+  check('dossier inaccessible : la régulation continue', () => {
+    assert.equal(c.CurrentHeaterCoolerState, 2, 'le reste du cycle a bien tourné')
+  })
+})()
+
 console.log(`\n${passed} test(s) réussi(s)`)
 fs.rmSync(tmp, { recursive: true, force: true })
 process.exit(process.exitCode || 0)

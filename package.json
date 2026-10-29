@@ -1,6 +1,6 @@
 {
   "name": "homebridge-rika-stove",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "description": "Homebridge plugin for RIKA pellet stoves via the FireNet cloud service — heating control, calculated pellet level, service and fault indicators. No dependencies.",
   "main": "index.js",
   "files": [

@@ -28,6 +28,14 @@ const DEFAULT_SERVICE_ALERT_KG = 25
 // Mesuré sur un RIKA Sumo : statusWarning passe de 0 à 2 à l'ouverture, et
 // revient à 0 à la fermeture. La porte du foyer ne lève aucun code.
 const DEFAULT_REFILL_WARNING_CODE = 2
+
+// Journal de mesures : une ligne par relevé, un fichier par mois, en CSV
+// directement exploitable dans un tableur.
+const LOG_COLUMNS = [
+  'horodatage', 'sonde_poele', 'consigne', 'repli', 'allume', 'etat_principal',
+  'sous_etat', 'puissance_pct', 'etage_courant', 'temp_flamme', 'pellets_cumul_kg',
+  'pellets_restants_pct', 'avant_entretien_kg', 'erreur', 'avertissement'
+]
 // Forme des services publiés. À incrémenter dès qu'un service change de
 // caractéristiques, de bornes ou de permissions : Homebridge restaure les
 // accessoires depuis son cache, et un setProps sur un service restauré n'est
@@ -201,6 +209,11 @@ class RIKAFirenetPlatform {
     this.serviceDue = false
     this.flameSensor = this.config.flameSensor === true
     this.flameInCard = this.config.flameInCard !== false
+
+    // --- Journal de mesures ---
+    this.dataLog = this.config.dataLog === true
+    this.dataLogDir = this.config.dataLogDir || '/var/lib/homebridge/mesures'
+    this.lastLogMonth = null
     this.serviceGauge = this.config.serviceGauge !== false
     this.faultActive = false
     this.faultDetail = ''
@@ -665,6 +678,7 @@ class RIKAFirenetPlatform {
       this.updatePelletLevel(body.sensors)
       this.updateHealth(body.sensors)
       this.publishHeater()
+      this.appendDataLog(body.sensors, body.controls)
     } catch (parseError) {
       this.log('Erreur lors du traitement des données:', parseError.message)
     }
@@ -737,6 +751,59 @@ class RIKAFirenetPlatform {
   // -------------------------------------------------------------------------
   // Santé du poêle
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // Journal de mesures
+  // -------------------------------------------------------------------------
+
+  appendDataLog (sensors, controls) {
+    if (!this.dataLog) {
+      return
+    }
+    try {
+      const now = new Date()
+      const p2 = (n) => String(n).padStart(2, '0')
+      const mois = `${now.getFullYear()}-${p2(now.getMonth() + 1)}`
+      const chemin = `${this.dataLogDir}/poele-${mois}.csv`
+
+      if (!fs.existsSync(this.dataLogDir)) {
+        fs.mkdirSync(this.dataLogDir, { recursive: true, mode: 0o755 })
+      }
+      // En-tête écrit une seule fois, à la création du fichier mensuel.
+      if (!fs.existsSync(chemin)) {
+        fs.writeFileSync(chemin, LOG_COLUMNS.join(';') + '\n', { mode: 0o644 })
+        this.log(`Nouveau journal de mesures : ${chemin}`)
+      }
+
+      // Horodatage local, lisible tel quel par un tableur.
+      const ts = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())} ` +
+                 `${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())}`
+
+      const ligne = [
+        ts,
+        sensors.inputRoomTemperature,
+        controls.targetTemperature,
+        controls.setBackTemperature,
+        controls.onOff ? 1 : 0,
+        sensors.statusMainState,
+        sensors.statusSubState,
+        controls.heatingPower,
+        sensors.inputCurrentStage,
+        sensors.inputFlameTemperature,
+        sensors.parameterFeedRateTotal,
+        this.pelletLevelPercent,
+        sensors.parameterServiceCountdownKg,
+        sensors.statusError,
+        sensors.statusWarning
+      ].map((v) => (v === undefined || v === null ? '' : String(v).replace('.', ',')))
+
+      fs.appendFileSync(chemin, ligne.join(';') + '\n')
+      this.lastLogMonth = mois
+    } catch (error) {
+      // Une écriture qui échoue ne doit jamais interrompre la régulation.
+      this.log('Journal de mesures indisponible:', error.message)
+    }
+  }
 
   updateHealth (sensors) {
     const countdown = Number(sensors.parameterServiceCountdownKg)
