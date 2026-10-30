@@ -36,6 +36,14 @@ const LOG_COLUMNS = [
   'sous_etat', 'puissance_pct', 'etage_courant', 'temp_flamme', 'pellets_cumul_kg',
   'pellets_restants_pct', 'avant_entretien_kg', 'erreur', 'avertissement'
 ]
+// Journal des changements de réglage. `revision` est l'horodatage Unix de la
+// dernière écriture acceptée par le poêle : il date à la seconde près une
+// modification venue d'ailleurs (écran du poêle, application, autre client).
+const JOURS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const SETTINGS_LOG_COLUMNS = [
+  'horodatage', 'modifie_le', 'revision', 'consigne', 'repli', 'offset_sonde',
+  'puissance_pct', 'mode', 'allume', 'eco', 'plages_actives', 'plages'
+]
 // Forme des services publiés. À incrémenter dès qu'un service change de
 // caractéristiques, de bornes ou de permissions : Homebridge restaure les
 // accessoires depuis son cache, et un setProps sur un service restauré n'est
@@ -679,6 +687,7 @@ class RIKAFirenetPlatform {
       this.updateHealth(body.sensors)
       this.publishHeater()
       this.appendDataLog(body.sensors, body.controls)
+      this.appendSettingsLog(body.controls)
     } catch (parseError) {
       this.log('Erreur lors du traitement des données:', parseError.message)
     }
@@ -732,6 +741,15 @@ class RIKAFirenetPlatform {
       frostProtectionActive: controls.frostProtectionActive,
       frostProtectionTemperature: controls.frostProtectionTemperature,
       revision: controls.revision
+    }
+
+    // L'API remplace l'objet de contrôle complet. Les réglages que le plugin ne
+    // pilote pas (plages horaires, temperatureOffset, ecoMode...) doivent être
+    // renvoyés tels quels, sans quoi le moindre réglage HomeKit les effacerait.
+    for (const key of Object.keys(controls)) {
+      if (!(key in formData)) {
+        formData[key] = controls[key]
+      }
     }
 
     this.log.debug(`Données envoyées: ${JSON.stringify(formData)}`)
@@ -802,6 +820,61 @@ class RIKAFirenetPlatform {
     } catch (error) {
       // Une écriture qui échoue ne doit jamais interrompre la régulation.
       this.log('Journal de mesures indisponible:', error.message)
+    }
+  }
+
+  // Une ligne par changement de réglage, détecté via `revision`. Permet de
+  // savoir quand un réglage a bougé, et de recouper avec le log de Homebridge
+  // pour distinguer une écriture du plugin d'une écriture venue d'ailleurs.
+  appendSettingsLog (controls) {
+    if (!this.dataLog || !controls || controls.revision === undefined) {
+      return
+    }
+    const revision = Number(controls.revision)
+    if (!Number.isFinite(revision) || revision === this.previousRevision) {
+      return
+    }
+    const premier = this.previousRevision === undefined
+    this.previousRevision = revision
+
+    try {
+      const chemin = `${this.dataLogDir}/poele-reglages.csv`
+      if (!fs.existsSync(this.dataLogDir)) {
+        fs.mkdirSync(this.dataLogDir, { recursive: true, mode: 0o755 })
+      }
+      if (!fs.existsSync(chemin)) {
+        fs.writeFileSync(chemin, SETTINGS_LOG_COLUMNS.join(';') + '\n', { mode: 0o644 })
+      }
+
+      const horodate = (d) => {
+        const p2 = (n) => String(n).padStart(2, '0')
+        return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ` +
+               `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`
+      }
+      const plages = JOURS.map((j) => controls[`heatingTime${j}1`] || '').join('/')
+
+      const ligne = [
+        horodate(new Date()),
+        horodate(new Date(revision * 1000)),
+        revision,
+        controls.targetTemperature,
+        controls.setBackTemperature,
+        controls.temperatureOffset,
+        controls.heatingPower,
+        controls.operatingMode,
+        controls.onOff ? 1 : 0,
+        controls.ecoMode ? 1 : 0,
+        controls.heatingTimesActiveForComfort ? 1 : 0,
+        plages
+      ].map((v) => (v === undefined || v === null ? '' : String(v).replace('.', ',')))
+
+      fs.appendFileSync(chemin, ligne.join(';') + '\n')
+      if (!premier) {
+        this.log(`Réglage modifié sur le poêle le ${horodate(new Date(revision * 1000))}`)
+      }
+    } catch (error) {
+      // Comme pour le journal de mesures : ne jamais interrompre la régulation.
+      this.log('Journal des réglages indisponible:', error.message)
     }
   }
 

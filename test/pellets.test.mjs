@@ -342,6 +342,114 @@ await (async () => {
   })
 })()
 
+console.log('\n=== JOURNAL DES REGLAGES ===')
+await (async () => {
+  const dir = `${tmp}/reglages`
+  const f = `${dir}/poele-reglages.csv`
+  const a = make({ dataLog: true, dataLogDir: dir })
+  const etat = (revision, cible) => {
+    a.client.getStatus = async () => ({
+      status: 200,
+      body: {
+        stoveID: 'TEST',
+        controls: {
+          onOff: true, heatingPower: 50, targetTemperature: cible, setBackTemperature: '17',
+          temperatureOffset: '-0.7', operatingMode: 2, ecoMode: false,
+          heatingTimesActiveForComfort: true, heatingTimeMon1: '04452400', revision
+        },
+        sensors: {
+          inputRoomTemperature: '19.5', statusMainState: 4, statusSubState: 3,
+          inputFlameTemperature: 320, parameterFeedRateTotal: 2117, statusWarning: 0,
+          parameterServiceCountdownKg: 350, parameterKgTillCleaning: 700,
+          statusError: 0, statusSubError: 0
+        }
+      }
+    })
+    return a.fetchStatus()
+  }
+
+  await etat(1793390482, '20')
+  check('premier relevé : une ligne de référence, sans alerte', () => {
+    const l = fs.readFileSync(f, 'utf8').trim().split('\n')
+    assert.equal(l.length, 2, 'en-tête + une ligne')
+    assert.equal(l[0].split(';')[0], 'horodatage')
+    assert.ok(!messages.some((m) => m.includes('Réglage modifié')))
+  })
+
+  await etat(1793390482, '20')
+  await etat(1793390482, '20')
+  check('révision inchangée : aucune ligne ajoutée', () => {
+    assert.equal(fs.readFileSync(f, 'utf8').trim().split('\n').length, 2)
+  })
+
+  await etat(1793400000, '23')
+  check('révision modifiée : une ligne et une alerte', () => {
+    const l = fs.readFileSync(f, 'utf8').trim().split('\n')
+    assert.equal(l.length, 3)
+    const c = l[2].split(';')
+    assert.equal(c.length, 12)
+    assert.equal(c[2], '1793400000')
+    assert.equal(c[3], '23', 'la nouvelle consigne est consignée')
+    assert.equal(c[5], '-0,7', 'offset en virgule décimale')
+    assert.ok(messages.some((m) => m.includes('Réglage modifié')))
+  })
+  check('la date de modification vient de revision, pas du relevé', () => {
+    const c = fs.readFileSync(f, 'utf8').trim().split('\n')[2].split(';')
+    assert.equal(c[1], new Date(1793400000 * 1000).toLocaleString('sv').replace('T', ' '))
+  })
+
+  const b = make({ dataLog: false, dataLogDir: `${tmp}/reglages-off` })
+  b.client.getStatus = async () => ({
+    status: 200,
+    body: { stoveID: 'TEST', controls: { onOff: true, revision: 42 }, sensors: {} }
+  })
+  await b.fetchStatus()
+  check('journal désactivé : aucun fichier de réglages', () => {
+    assert.ok(!fs.existsSync(`${tmp}/reglages-off`))
+  })
+})()
+
+console.log('\n=== PLAGES HORAIRES ===')
+await (async () => {
+  const a = make()
+  let envoye = null
+  a.updateStatus = () => {}
+  a.client.getStatus = async () => ({
+    status: 200,
+    body: {
+      stoveID: 'TEST',
+      controls: {
+        onOff: true, heatingPower: 50, targetTemperature: '20', setBackTemperature: '17',
+        heatingTimesActiveForComfort: true, revision: 7,
+        heatingTimeMon1: '04452400', heatingTimeMon2: '00000000',
+        heatingTimeSat1: '07002400', heatingTimeSat2: '00000000',
+        temperatureOffset: '-0.7', ecoMode: false, RoomPowerRequest: 3, debug0: 'x'
+      },
+      sensors: {}
+    }
+  })
+  a.client.sendControls = async (data) => { envoye = data; return { status: 200 } }
+
+  await a.updateCharacteristic('targetTemperature', 21)
+
+  check('un réglage HomeKit n\'efface pas la programmation', () => {
+    assert.equal(envoye.heatingTimeMon1, '04452400')
+    assert.equal(envoye.heatingTimeSat1, '07002400')
+    assert.equal(envoye.heatingTimeMon2, '00000000')
+  })
+  check('un réglage HomeKit n\'efface pas l\'offset de sonde', () => {
+    assert.equal(envoye.temperatureOffset, '-0.7')
+    assert.equal(envoye.ecoMode, false)
+    assert.equal(envoye.RoomPowerRequest, 3)
+  })
+  check('le reste du payload est bien transmis', () => {
+    assert.equal(envoye.targetTemperature, 21)
+    assert.equal(envoye.setBackTemperature, '17')
+    assert.equal(envoye.heatingTimesActiveForComfort, true)
+    assert.equal(envoye.revision, 7)
+  })
+})()
+
 console.log(`\n${passed} test(s) réussi(s)`)
 fs.rmSync(tmp, { recursive: true, force: true })
 process.exit(process.exitCode || 0)
